@@ -1,5 +1,7 @@
-﻿import type React from 'react';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type React from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CameraSettings } from '../cameraTypes';
+import { getCameraPositionFromRect } from '../recordingLayout';
 import type {
   BoardElement,
   BoardPoint,
@@ -7,6 +9,8 @@ import type {
   InteractionState,
   ColorStyle,
   LinearElement,
+  Slide,
+  SlideFrame,
   TextEditorState,
   TextElement,
   TextStyle,
@@ -36,14 +40,24 @@ import {
 type WhiteboardStageProps = {
   activeTool: ToolType;
   elements: BoardElement[];
+  slides: Slide[];
+  freeboardElements: BoardElement[];
+  activeSlideId: string | null;
+  recordingFrame: SlideFrame | null;
+  cameraSettings: CameraSettings;
+  cameraStream: MediaStream | null;
+  onCameraSettingsChange: (patch: Partial<CameraSettings>) => void;
+  onRecordingPointerChange: (state: { point: BoardPoint; pressed: boolean; visible: boolean } | null) => void;
   selectedIds: string[];
   selectedBounds: ReturnType<typeof getElementBounds> | null;
   textDefaults: TextStyle;
   shapeDefaults: ColorStyle;
   textEditor: TextEditorState | null;
   viewport: ViewportState;
+  onActiveSlideChange: (slideId: string | null) => void;
   onActiveToolChange: (tool: ToolType) => void;
   onCommitElementsChange: (previous: BoardElement[], next: BoardElement[]) => void;
+  getScopeElements: (slideId: string | null) => BoardElement[];
   onElementsChange: React.Dispatch<React.SetStateAction<BoardElement[]>>;
   onSelectedIdsChange: React.Dispatch<React.SetStateAction<string[]>>;
   onTextEditorChange: (state: TextEditorState | null) => void;
@@ -55,14 +69,24 @@ type ElementSnapshot = Record<string, BoardElement>;
 function WhiteboardStage({
   activeTool,
   elements,
+  slides,
+  freeboardElements,
+  activeSlideId,
+  recordingFrame,
+  cameraSettings,
+  cameraStream,
+  onCameraSettingsChange,
+  onRecordingPointerChange,
   selectedIds,
   selectedBounds,
   textDefaults,
   shapeDefaults,
   textEditor,
   viewport,
+  onActiveSlideChange,
   onActiveToolChange,
   onCommitElementsChange,
+  getScopeElements,
   onElementsChange,
   onSelectedIdsChange,
   onTextEditorChange,
@@ -70,9 +94,16 @@ function WhiteboardStage({
 }: WhiteboardStageProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraDragRef = useRef<{
+    canvasRect: SlideFrame;
+    size: number;
+    offset: BoardPoint;
+  } | null>(null);
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
   const [editorHeight, setEditorHeight] = useState<number | null>(null);
   const [hoverCursor, setHoverCursor] = useState<string | null>(null);
+  const [isCameraDragging, setIsCameraDragging] = useState(false);
 
   const selectedSingleElement =
     selectedIds.length === 1 ? elements.find((element) => element.id === selectedIds[0]) ?? null : null;
@@ -81,6 +112,22 @@ function WhiteboardStage({
     textEditor &&
     ((elements.find((element) => element.id === textEditor.elementId && element.type === 'text') as TextElement | undefined) ??
       null);
+
+  useEffect(() => {
+    const video = cameraVideoRef.current;
+    if (!video) {
+      return;
+    }
+
+    video.srcObject = cameraStream;
+    if (cameraStream) {
+      video.play().catch(() => undefined);
+    }
+
+    return () => {
+      video.srcObject = null;
+    };
+  }, [cameraStream]);
 
   const selectedElementUsesCustomSelection =
     selectedSingleElement &&
@@ -133,6 +180,11 @@ function WhiteboardStage({
     interaction?.type === 'drawing-shape' ||
     interaction?.type === 'drawing-stroke';
 
+  const activeSlideDrawingElement =
+    activeSlideId && (interaction?.type === 'drawing-shape' || interaction?.type === 'drawing-stroke')
+      ? elements.find((element) => element.id === interaction.elementId) ?? null
+      : null;
+
   const selectionBox =
     isMarqueeSelecting
       ? normalizeRect(
@@ -170,6 +222,88 @@ function WhiteboardStage({
       x: (event.clientX - rect.left - viewport.x) / viewport.zoom,
       y: (event.clientY - rect.top - viewport.y) / viewport.zoom,
     };
+  };
+
+  const getSlideAtPoint = (point: BoardPoint) => {
+    for (let index = slides.length - 1; index >= 0; index -= 1) {
+      const slide = slides[index];
+      if (isPointInBounds(point, slide.frame)) {
+        return slide;
+      }
+    }
+
+    return null;
+  };
+
+  const activeSlide = activeSlideId ? slides.find((slide) => slide.id === activeSlideId) ?? null : null;
+  const cameraFrame = activeSlide?.frame ?? recordingFrame ?? getVisibleWorldFrame(surfaceRef.current, viewport);
+  const cameraRect = cameraFrame ? getCameraWorldRect(cameraSettings, cameraFrame) : null;
+  const cameraOverlayStyle =
+    cameraRect && cameraSettings.enabled
+      ? ({
+          left: `${cameraRect.x * viewport.zoom + viewport.x}px`,
+          top: `${cameraRect.y * viewport.zoom + viewport.y}px`,
+          width: `${cameraRect.width * viewport.zoom}px`,
+          height: `${cameraRect.height * viewport.zoom}px`,
+          borderRadius:
+            cameraSettings.shape === 'circle'
+              ? '999px'
+              : `${Math.round(cameraRect.radius * viewport.zoom)}px`,
+        } as React.CSSProperties)
+      : undefined;
+
+  const handleCameraPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!cameraRect || !cameraFrame) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = getWorldPoint(event);
+    cameraDragRef.current = {
+      canvasRect: cameraFrame,
+      size: cameraRect.width,
+      offset: {
+        x: point.x - cameraRect.x,
+        y: point.y - cameraRect.y,
+      },
+    };
+    setIsCameraDragging(true);
+  };
+
+  const handleCameraPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = cameraDragRef.current;
+    if (!drag) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const point = getWorldPoint(event);
+    const nextX = point.x - drag.offset.x;
+    const nextY = point.y - drag.offset.y;
+    const clampedRect = {
+      x: Math.min(Math.max(nextX, drag.canvasRect.x), drag.canvasRect.x + Math.max(drag.canvasRect.width - drag.size, 0)),
+      y: Math.min(Math.max(nextY, drag.canvasRect.y), drag.canvasRect.y + Math.max(drag.canvasRect.height - drag.size, 0)),
+      width: drag.size,
+      height: drag.size,
+    };
+
+    onCameraSettingsChange({
+      position: getCameraPositionFromRect(drag.canvasRect, clampedRect),
+    });
+  };
+
+  const handleCameraPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!cameraDragRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    cameraDragRef.current = null;
+    setIsCameraDragging(false);
   };
 
   const getTopElementAtPoint = (point: BoardPoint) => {
@@ -323,6 +457,27 @@ function WhiteboardStage({
     }
 
     const point = getWorldPoint(event);
+    onRecordingPointerChange({ point, pressed: true, visible: true });
+    const targetScopeId = getSlideAtPoint(point)?.id ?? null;
+    const isCreationTool =
+      activeTool === 'draw' ||
+      activeTool === 'rectangle' ||
+      activeTool === 'ellipse' ||
+      activeTool === 'line' ||
+      activeTool === 'arrow' ||
+      activeTool === 'text';
+
+    const scopeElements = targetScopeId === activeSlideId ? elements : getScopeElements(targetScopeId);
+
+    if (isCreationTool && targetScopeId !== activeSlideId) {
+      onActiveSlideChange(targetScopeId);
+    }
+
+    if (activeTool === 'select' && targetScopeId !== activeSlideId) {
+      onActiveSlideChange(targetScopeId);
+      return;
+    }
+
     const hitElement = getTopElementAtPoint(point);
 
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -351,13 +506,13 @@ function WhiteboardStage({
         points: [point],
         color: shapeDefaults.color,
       };
-      onElementsChange((current) => [...current, nextStroke]);
+      onElementsChange([...scopeElements, nextStroke]);
       onSelectedIdsChange([]);
       setInteraction({
         type: 'drawing-stroke',
         pointerId: event.pointerId,
         elementId: strokeId,
-        initialElements: structuredClone(elements),
+        initialElements: structuredClone(scopeElements),
       });
       return;
     }
@@ -385,14 +540,14 @@ function WhiteboardStage({
               color: shapeDefaults.color,
             };
 
-      onElementsChange((current) => [...current, nextElement]);
+      onElementsChange([...scopeElements, nextElement]);
       onSelectedIdsChange([nextId]);
       setInteraction({
         type: 'drawing-shape',
         pointerId: event.pointerId,
         elementId: nextId,
         origin: point,
-        initialElements: structuredClone(elements),
+        initialElements: structuredClone(scopeElements),
       });
       return;
     }
@@ -410,8 +565,8 @@ function WhiteboardStage({
         ...textDefaults,
       };
 
-      const nextElements = [...elements, nextText];
-      onCommitElementsChange(elements, nextElements);
+      const nextElements = [...scopeElements, nextText];
+      onCommitElementsChange(scopeElements, nextElements);
       onSelectedIdsChange([nextId]);
       onTextEditorChange({ elementId: nextId, value: 'Text' });
       return;
@@ -517,6 +672,7 @@ function WhiteboardStage({
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const point = getWorldPoint(event);
+    onRecordingPointerChange({ point, pressed: interaction?.pointerId === event.pointerId, visible: true });
 
     if (!interaction || interaction.pointerId !== event.pointerId) {
       setHoverCursor(getHoverCursorForPoint(point));
@@ -666,10 +822,18 @@ function WhiteboardStage({
     }
 
     setInteraction(null);
+    onRecordingPointerChange({ point: getWorldPoint(event), pressed: false, visible: true });
   };
 
   const handleStageDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const point = getWorldPoint(event);
+    const targetScopeId = getSlideAtPoint(point)?.id ?? null;
+
+    if (targetScopeId !== activeSlideId) {
+      onActiveSlideChange(targetScopeId);
+      return;
+    }
+
     const hitElement = getTopElementAtPoint(point);
     if (hitElement?.type !== 'text') {
       return;
@@ -699,13 +863,65 @@ function WhiteboardStage({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={() => setHoverCursor(null)}
+      onPointerLeave={() => {
+        setHoverCursor(null);
+        onRecordingPointerChange(null);
+      }}
     >
       <svg className="board-stage__svg">
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.zoom})`}>
-          {elements.map((element) =>
-            editingElement?.type === 'text' && element.id === editingElement.id ? null : renderElement(element)
-          )}
+          <defs>
+            {slides.map((slide) => (
+              <clipPath key={`${slide.id}-clip`} id={getSlideClipId(slide.id)}>
+                <rect {...slide.frame} />
+              </clipPath>
+            ))}
+            <mask id="freeboard-slide-mask" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000">
+              <rect x="-100000" y="-100000" width="200000" height="200000" fill="white" />
+              {slides.map((slide) => (
+                <rect key={`${slide.id}-mask`} {...slide.frame} fill="black" />
+              ))}
+            </mask>
+          </defs>
+
+          {slides.map((slide) => (
+            <g key={`${slide.id}-frame-shell`}>
+              <text
+                className="board-slide-title"
+                x={slide.frame.x + slide.frame.width / 2}
+                y={slide.frame.y - 18}
+                textAnchor="middle"
+              >
+                {slide.name}
+              </text>
+              <rect
+                className={`board-slide-frame${slide.id === activeSlideId ? ' board-slide-frame--active' : ''}`}
+                {...slide.frame}
+              />
+            </g>
+          ))}
+
+          {slides.map((slide) => (
+            <g key={`${slide.id}-elements`} clipPath={`url(#${getSlideClipId(slide.id)})`}>
+              {slide.elements.map((element) =>
+                element.id === activeSlideDrawingElement?.id || (editingElement?.type === 'text' && element.id === editingElement.id)
+                  ? null
+                  : renderElement(element)
+              )}
+            </g>
+          ))}
+
+          {activeSlideDrawingElement ? renderElement(activeSlideDrawingElement) : null}
+
+          {recordingFrame ? (
+            <rect className="board-recording-frame" {...recordingFrame} />
+          ) : null}
+
+          <g mask="url(#freeboard-slide-mask)">
+            {freeboardElements.map((element) =>
+              editingElement?.type === 'text' && element.id === editingElement.id ? null : renderElement(element)
+            )}
+          </g>
 
           {selectionBox && (
             <rect
@@ -760,6 +976,25 @@ function WhiteboardStage({
         </g>
       </svg>
 
+      {cameraSettings.enabled && cameraOverlayStyle ? (
+        <div
+          className={`board-camera-overlay board-camera-overlay--${cameraSettings.shape}${
+            isCameraDragging ? ' board-camera-overlay--dragging' : ''
+          }`}
+          style={cameraOverlayStyle}
+          onPointerDown={handleCameraPointerDown}
+          onPointerMove={handleCameraPointerMove}
+          onPointerUp={handleCameraPointerUp}
+          onPointerCancel={handleCameraPointerUp}
+        >
+          {cameraStream ? (
+            <video ref={cameraVideoRef} className="board-camera-overlay__video" muted playsInline autoPlay />
+          ) : (
+            <div className="board-camera-overlay__placeholder">Camera</div>
+          )}
+        </div>
+      ) : null}
+
       {editingElement?.type === 'text' && (
         <textarea
           ref={textEditorRef}
@@ -811,6 +1046,39 @@ function WhiteboardStage({
 
 
 
+function getVisibleWorldFrame(surface: HTMLDivElement | null, viewport: ViewportState): SlideFrame {
+  const width = surface?.clientWidth ?? window.innerWidth;
+  const height = surface?.clientHeight ?? window.innerHeight;
+
+  return {
+    x: -viewport.x / viewport.zoom,
+    y: -viewport.y / viewport.zoom,
+    width: width / viewport.zoom,
+    height: height / viewport.zoom,
+  };
+}
+
+function getCameraWorldRect(settings: CameraSettings, frame: SlideFrame) {
+  const size = Math.min(settings.size, Math.max(48, Math.min(frame.width, frame.height)));
+  const availableX = Math.max(frame.width - size, 0);
+  const availableY = Math.max(frame.height - size, 0);
+
+  return {
+    x: frame.x + clamp01(settings.position.x) * availableX,
+    y: frame.y + clamp01(settings.position.y) * availableY,
+    width: size,
+    height: size,
+    radius: settings.shape === 'circle' ? size / 2 : Math.min(size / 2, Math.max(8, size * 0.12)),
+  };
+}
+
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
+}
+
+function getSlideClipId(slideId: string) {
+  return `slide-clip-${slideId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
 function renderElement(element: BoardElement) {
   switch (element.type) {
     case 'draw':

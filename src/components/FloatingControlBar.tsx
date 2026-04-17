@@ -1,8 +1,10 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 type FloatingControlBarProps = {
   onOpenSettings: () => void;
+  onToggleRecording: () => void;
+  recordingStatus: 'idle' | 'recording' | 'stopping';
 };
 
 type DragState = {
@@ -10,7 +12,7 @@ type DragState = {
   offsetY: number;
 } | null;
 
-function FloatingControlBar({ onOpenSettings }: FloatingControlBarProps) {
+function FloatingControlBar({ onOpenSettings, onToggleRecording, recordingStatus }: FloatingControlBarProps) {
   const [position, setPosition] = useState({ x: 84, y: 140 });
   const dragStateRef = useRef<DragState>(null);
 
@@ -59,22 +61,25 @@ function FloatingControlBar({ onOpenSettings }: FloatingControlBarProps) {
       onPointerDown={handlePointerDown}
     >
       <button type="button" className="floating-controls__button" onClick={onOpenSettings}>
-        设置
+        {'\u8bbe\u7f6e'}
       </button>
       <button type="button" className="floating-controls__button" onClick={() => undefined}>
-        提词器
+        {'\u63d0\u8bcd\u5668'}
       </button>
       <button
         type="button"
-        className="floating-controls__button floating-controls__button--record"
-        onClick={() => undefined}
+        className={`floating-controls__button floating-controls__button--record${recordingStatus === 'recording' ? ' floating-controls__button--recording' : ''}`}
+        onClick={onToggleRecording}
+        disabled={recordingStatus === 'stopping'}
       >
-        录制
+        {recordingStatus === 'recording'
+          ? '\u505c\u6b62'
+          : recordingStatus === 'stopping'
+            ? '\u5bfc\u51fa\u4e2d'
+            : '\u5f55\u5236'}
       </button>
     </div>
   );
 }
 
 export default FloatingControlBar;
-
-

@@ -137,6 +137,19 @@ export type BoardElement =
   | LinearElement
   | TextElement
   | ImageElement;
+export type SlideFrame = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type Slide = {
+  id: string;
+  name: string;
+  frame: SlideFrame;
+  elements: BoardElement[];
+};
 
 export type TextEditorState = {
   elementId: string;

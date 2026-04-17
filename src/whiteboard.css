@@ -372,6 +372,43 @@
   box-shadow: 0 14px 24px rgba(239, 68, 68, 0.22);
 }
 
+.floating-controls__button--recording {
+  background: #0f172a;
+  border-color: #0f172a;
+  box-shadow: 0 14px 24px rgba(15, 23, 42, 0.22);
+}
+
+.floating-controls__button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.board-recording-error {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 14;
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 10px 14px;
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  border-radius: 14px;
+  background: rgba(254, 242, 242, 0.96);
+  color: #991b1b;
+  font-size: 0.86rem;
+  font-weight: 750;
+  box-shadow: 0 16px 38px rgba(127, 29, 29, 0.14);
+  pointer-events: none;
+}
+
+.board-camera-capture-video {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .board-stage {
   -webkit-user-select: none;
   user-select: none;
@@ -385,6 +422,46 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 250, 252, 0.98));
   background-size: var(--board-grid-size, 24px) var(--board-grid-size, 24px), 100% 100%;
   overflow: hidden;
+}
+
+.board-camera-overlay {
+  position: absolute;
+  z-index: 7;
+  overflow: hidden;
+  background: #0f172a;
+  cursor: move;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.board-camera-overlay--circle {
+  border-radius: 999px;
+}
+
+.board-camera-overlay--square {
+  border-radius: 18px;
+}
+
+.board-camera-overlay--dragging {
+  cursor: grabbing;
+}
+
+.board-camera-overlay__video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.board-camera-overlay__placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 0.86rem;
+  font-weight: 800;
 }
 
 .board-stage--hand {
@@ -440,6 +517,228 @@
   stroke-linejoin: round;
 }
 
+
+.board-slide-frame {
+  fill: #ffffff;
+  stroke: rgba(15, 23, 42, 0.18);
+  stroke-width: 2;
+  filter: drop-shadow(0 18px 34px rgba(15, 23, 42, 0.12));
+  pointer-events: none;
+}
+
+.board-slide-frame--active {
+  stroke: rgba(109, 93, 252, 0.86);
+  stroke-width: 3;
+  filter: drop-shadow(0 18px 34px rgba(15, 23, 42, 0.12)) drop-shadow(0 0 10px rgba(109, 93, 252, 0.18));
+}
+
+.board-recording-frame {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(239, 68, 68, 0.92);
+  stroke-width: 3;
+  stroke-dasharray: 14 10;
+  filter: drop-shadow(0 0 10px rgba(239, 68, 68, 0.24));
+  pointer-events: none;
+}
+
+.board-slide-title {
+  fill: rgba(51, 65, 85, 0.72);
+  font-size: 28px;
+  font-weight: 800;
+  pointer-events: none;
+  user-select: none;
+}
+
+.slide-navigator {
+  position: absolute;
+  top: 112px;
+  right: 18px;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 172px;
+  max-height: calc(100dvh - 150px);
+  padding: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+.slide-navigator__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.slide-navigator__item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.88);
+  cursor: grab;
+}
+
+.slide-navigator__item:active {
+  cursor: grabbing;
+}
+
+.slide-navigator__item--active {
+  background: rgba(109, 93, 252, 0.12);
+  border-color: rgba(109, 93, 252, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(109, 93, 252, 0.16);
+}
+
+.slide-navigator__item--dragging {
+  opacity: 0.58;
+}
+
+.slide-navigator__thumbnail-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.slide-navigator__thumbnail {
+  display: block;
+  width: 100%;
+  height: 82px;
+  background: #f8fafc;
+}
+
+.slide-navigator__thumbnail-bg {
+  fill: #ffffff;
+}
+
+.slide-thumbnail-element--shape,
+.slide-thumbnail-element--line {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.slide-thumbnail-element--arrow-shaft {
+  stroke-linecap: butt;
+}
+
+.slide-thumbnail-element--arrowhead {
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.slide-thumbnail-element--stroke {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.slide-thumbnail-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.18;
+  overflow: hidden;
+}
+
+.slide-navigator__meta {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.slide-navigator__page {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.slide-navigator__name {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.slide-navigator__rename-input {
+  min-width: 0;
+  width: 100%;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid rgba(109, 93, 252, 0.36);
+  border-radius: 9px;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 0.8rem;
+  font-weight: 800;
+  outline: none;
+}
+
+.slide-navigator__actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.slide-navigator__action {
+  height: 28px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #475569;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.slide-navigator__action:hover {
+  background: rgba(226, 232, 240, 0.78);
+}
+
+.slide-navigator__action--danger {
+  color: #b91c1c;
+}
+
+.slide-navigator__action--danger:hover {
+  background: rgba(254, 226, 226, 0.95);
+}
+
+.slide-navigator__add {
+  height: 36px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  color: #334155;
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.slide-navigator__add:hover {
+  background: rgba(226, 232, 240, 0.78);
+}
 .board-stage__selection-area {
   fill: rgba(148, 163, 184, 0.11);
   stroke: none;

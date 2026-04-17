@@ -3,11 +3,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FloatingControlBar from './FloatingControlBar';
 import TopToolbar from './TopToolbar';
 import WhiteboardStage from './WhiteboardStage';
+import type { CameraSettings, RecordingVisualSettings } from '../cameraTypes';
+import type { BackgroundSwatch } from '../mockOptions';
+import { getRecordingCompositionLayout } from '../recordingLayout';
 import type {
   BoardElement,
   ColorStyle,
   ImageElement,
   LayerAction,
+  LinearElement,
+  Slide,
+  SlideFrame,
   TextEditorState,
   TextStyle,
   ToolType,
@@ -26,17 +32,92 @@ import { duplicateElements, generateElementId, getElementBounds, offsetElement }
 
 type WhiteboardPageProps = {
   onOpenSettings: () => void;
+  slideAspectRatio: number;
+  cameraSettings: CameraSettings;
+  onCameraSettingsChange: (patch: Partial<CameraSettings>) => void;
+  cameraStream: MediaStream | null;
+  microphoneStream: MediaStream | null;
+  recordingBackground: BackgroundSwatch;
+  recordingVisualSettings: RecordingVisualSettings;
+};
+
+type ElementScopeType = 'slide' | 'freeboard';
+
+type ElementsHistoryEntry = {
+  scopeType: ElementScopeType;
+  scopeId: string | null;
+  elements: BoardElement[];
 };
 
 type ElementsHistory = {
-  past: BoardElement[][];
+  past: ElementsHistoryEntry[];
   present: BoardElement[];
-  future: BoardElement[][];
+  future: ElementsHistoryEntry[];
+};
+type RecordingStatus = 'idle' | 'recording' | 'stopping';
+
+type RecordingSnapshot = {
+  frame: SlideFrame;
+  elements: BoardElement[];
 };
 
-function WhiteboardPage({ onOpenSettings }: WhiteboardPageProps) {
+type RecordingTransition = {
+  from: RecordingSnapshot;
+  to: RecordingSnapshot;
+  direction: 1 | -1;
+  startTime: number;
+};
+
+type RecordingRuntime = {
+  canvas: HTMLCanvasElement;
+  context: CanvasRenderingContext2D;
+  stream: MediaStream;
+  recorder: MediaRecorder;
+  chunks: Blob[];
+  frame: SlideFrame;
+  mode: 'slide' | 'freeboard';
+  animationFrameId: number | null;
+};
+
+type RecordingRenderState = {
+  slides: Slide[];
+  activeSlideId: string | null;
+  elements: BoardElement[];
+  slideAspectRatio: number;
+  viewport: ViewportState;
+  transition: RecordingTransition | null;
+};
+
+type RecordingPointerState = {
+  point: {
+    x: number;
+    y: number;
+  };
+  pressed: boolean;
+  visible: boolean;
+};
+
+function WhiteboardPage({
+  onOpenSettings,
+  slideAspectRatio,
+  cameraSettings,
+  onCameraSettingsChange,
+  cameraStream,
+  microphoneStream,
+  recordingBackground,
+  recordingVisualSettings,
+}: WhiteboardPageProps) {
+  const initialSlideRef = useRef<Slide | null>(null);
+  if (!initialSlideRef.current) {
+    initialSlideRef.current = createSlide(0, slideAspectRatio);
+  }
+
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [activeTool, setActiveTool] = useState<ToolType>('select');
+  const [slides, setSlides] = useState<Slide[]>(() => [initialSlideRef.current!]);
+  const [activeSlideId, setActiveSlideId] = useState<string | null>(() => initialSlideRef.current!.id);
+  const [freeboardElements, setFreeboardElements] = useState<BoardElement[]>([]);
+  const activeScopeRef = useRef<string | null>(initialSlideRef.current!.id);
   const [history, setHistory] = useState<ElementsHistory>({
     past: [],
     present: [],
@@ -50,49 +131,148 @@ function WhiteboardPage({ onOpenSettings }: WhiteboardPageProps) {
   const [clipboard, setClipboard] = useState<BoardElement[]>([]);
   const [pasteCount, setPasteCount] = useState(0);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>('idle');
+  const [recordingFrame, setRecordingFrame] = useState<SlideFrame | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const recordingRuntimeRef = useRef<RecordingRuntime | null>(null);
+  const recordingRenderStateRef = useRef<RecordingRenderState | null>(null);
+  const previousActiveSlideIdRef = useRef<string | null>(activeSlideId);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const cameraSettingsRef = useRef(cameraSettings);
+  const recordingBackgroundRef = useRef(recordingBackground);
+  const recordingVisualSettingsRef = useRef(recordingVisualSettings);
+  const recordingPointerRef = useRef<RecordingPointerState | null>(null);
+  const cameraRecordingVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const elements = history.present;
+  useEffect(() => {
+    cameraSettingsRef.current = cameraSettings;
+  }, [cameraSettings]);
 
+  useEffect(() => {
+    recordingBackgroundRef.current = recordingBackground;
+  }, [recordingBackground]);
 
+  useEffect(() => {
+    recordingVisualSettingsRef.current = recordingVisualSettings;
+  }, [recordingVisualSettings]);
 
-  const onElementsChange = useCallback((update: React.SetStateAction<BoardElement[]>) => {
-    setHistory((current) => ({
-      ...current,
-      present: resolveElementsUpdate(update, current.present),
-    }));
+  useEffect(() => {
+    const video = cameraRecordingVideoRef.current;
+    if (!video) {
+      return;
+    }
+
+    video.srcObject = cameraStream;
+    if (cameraStream) {
+      video.play().catch(() => undefined);
+    }
+
+    return () => {
+      video.srcObject = null;
+    };
+  }, [cameraStream]);
+
+  useEffect(() => {
+    setSlides((current) => reflowSlideFrames(current, slideAspectRatio));
+  }, [slideAspectRatio]);
+  const writeScopeElements = useCallback((scopeId: string | null, nextElements: BoardElement[]) => {
+    const cloned = cloneElements(nextElements);
+
+    if (scopeId === null) {
+      setFreeboardElements(cloned);
+      return;
+    }
+
+    setSlides((current) =>
+      current.map((slide) => (slide.id === scopeId ? { ...slide, elements: cloned } : slide))
+    );
   }, []);
 
-  const onCommitElementsChange = useCallback((previous: BoardElement[], next: BoardElement[]) => {
-    setHistory((current) => {
-      if (serializeElements(previous) === serializeElements(next)) {
+  const getScopeElements = useCallback(
+    (scopeId: string | null) => {
+      if (scopeId === null) {
+        return freeboardElements;
+      }
+
+      return slides.find((slide) => slide.id === scopeId)?.elements ?? [];
+    },
+    [freeboardElements, slides]
+  );
+
+  const activateScope = useCallback(
+    (scopeId: string | null) => {
+      activeScopeRef.current = scopeId;
+      setActiveSlideId(scopeId);
+      setSelectedIds([]);
+      setTextEditor(null);
+      setHistory((current) => ({
+        ...current,
+        present: cloneElements(getScopeElements(scopeId)),
+      }));
+    },
+    [getScopeElements]
+  );
+
+  const onElementsChange = useCallback(
+    (update: React.SetStateAction<BoardElement[]>) => {
+      setHistory((current) => {
+        const next = resolveElementsUpdate(update, current.present);
+        writeScopeElements(activeScopeRef.current, next);
+
         return {
           ...current,
           present: cloneElements(next),
         };
-      }
+      });
+    },
+    [writeScopeElements]
+  );
 
-      return {
-        past: [...current.past, cloneElements(previous)],
-        present: cloneElements(next),
-        future: [],
-      };
-    });
-  }, []);
+  const onCommitElementsChange = useCallback(
+    (previous: BoardElement[], next: BoardElement[]) => {
+      const scopeId = activeScopeRef.current;
 
+      setHistory((current) => {
+        writeScopeElements(scopeId, next);
+
+        if (serializeElements(previous) === serializeElements(next)) {
+          return {
+            ...current,
+            present: cloneElements(next),
+          };
+        }
+
+        return {
+          past: [...current.past, createHistoryEntry(scopeId, previous)],
+          present: cloneElements(next),
+          future: [],
+        };
+      });
+    },
+    [writeScopeElements]
+  );
   const undo = useCallback(() => {
     setHistory((current) => {
       if (current.past.length === 0) {
         return current;
       }
 
+      const currentScopeId = activeScopeRef.current;
       const previous = current.past[current.past.length - 1];
+      writeScopeElements(previous.scopeId, previous.elements);
+      activeScopeRef.current = previous.scopeId;
+      setActiveSlideId(previous.scopeId);
+      setTextEditor(null);
+      setSelectedIds((currentSelection) => (currentScopeId === previous.scopeId ? currentSelection : []));
+
       return {
         past: current.past.slice(0, -1),
-        present: cloneElements(previous),
-        future: [cloneElements(current.present), ...current.future],
+        present: cloneElements(previous.elements),
+        future: [createHistoryEntry(currentScopeId, current.present), ...current.future],
       };
     });
-  }, []);
+  }, [writeScopeElements]);
 
   const redo = useCallback(() => {
     setHistory((current) => {
@@ -100,14 +280,21 @@ function WhiteboardPage({ onOpenSettings }: WhiteboardPageProps) {
         return current;
       }
 
+      const currentScopeId = activeScopeRef.current;
       const next = current.future[0];
+      writeScopeElements(next.scopeId, next.elements);
+      activeScopeRef.current = next.scopeId;
+      setActiveSlideId(next.scopeId);
+      setTextEditor(null);
+      setSelectedIds((currentSelection) => (currentScopeId === next.scopeId ? currentSelection : []));
+
       return {
-        past: [...current.past, cloneElements(current.present)],
-        present: cloneElements(next),
+        past: [...current.past, createHistoryEntry(currentScopeId, current.present)],
+        present: cloneElements(next.elements),
         future: current.future.slice(1),
       };
     });
-  }, []);
+  }, [writeScopeElements]);
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => elements.some((element) => element.id === id)));
@@ -244,6 +431,190 @@ function WhiteboardPage({ onOpenSettings }: WhiteboardPageProps) {
     setIsClearConfirmOpen(false);
   }, [elements, onCommitElementsChange]);
 
+  const stageSlides = useMemo(
+    () => slides.map((slide) => (slide.id === activeSlideId ? { ...slide, elements } : slide)),
+    [activeSlideId, elements, slides]
+  );
+
+  const stageFreeboardElements = activeSlideId === null ? elements : freeboardElements;
+
+  const recordingRenderState = useMemo<RecordingRenderState>(
+    () => {
+      const recordingActiveSlideId =
+        recordingStatus !== 'idle' && stageSlides.length > 0 ? activeSlideId ?? stageSlides[0]?.id ?? null : activeSlideId;
+
+      return {
+        slides: stageSlides,
+        activeSlideId: recordingActiveSlideId,
+        elements,
+        slideAspectRatio,
+        viewport,
+        transition: recordingRenderStateRef.current?.transition ?? null,
+      };
+    },
+    [activeSlideId, elements, recordingStatus, slideAspectRatio, stageSlides, viewport]
+  );
+
+  useEffect(() => {
+    recordingRenderStateRef.current = {
+      ...recordingRenderState,
+      transition: recordingRenderStateRef.current?.transition ?? null,
+    };
+  }, [recordingRenderState]);
+
+  useEffect(() => {
+    const previousSlideId = previousActiveSlideIdRef.current;
+
+    if (recordingStatus === 'recording' && previousSlideId && activeSlideId && previousSlideId !== activeSlideId && stageSlides.length > 0) {
+      const previousSlide = stageSlides.find((slide) => slide.id === previousSlideId);
+      const nextSlide = stageSlides.find((slide) => slide.id === activeSlideId);
+      const previousIndex = stageSlides.findIndex((slide) => slide.id === previousSlideId);
+      const nextIndex = stageSlides.findIndex((slide) => slide.id === activeSlideId);
+
+      if (previousSlide && nextSlide) {
+        const transition: RecordingTransition = {
+          from: { frame: previousSlide.frame, elements: cloneElements(previousSlide.elements) },
+          to: { frame: nextSlide.frame, elements: cloneElements(nextSlide.elements) },
+          direction: nextIndex >= previousIndex ? 1 : -1,
+          startTime: performance.now(),
+        };
+        recordingRenderStateRef.current = {
+          ...(recordingRenderStateRef.current ?? recordingRenderState),
+          transition,
+        };
+      }
+    }
+
+    previousActiveSlideIdRef.current = activeSlideId;
+  }, [activeSlideId, recordingRenderState, recordingStatus, stageSlides]);
+  const addSlide = useCallback(() => {
+    const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
+    const activeIndex = activeSlideId ? currentSlides.findIndex((slide) => slide.id === activeSlideId) : currentSlides.length - 1;
+    const insertIndex = Math.max(0, activeIndex + 1);
+    const nextSlide = createSlide(insertIndex, slideAspectRatio);
+    const nextSlides = reflowSlideFrames([
+      ...currentSlides.slice(0, insertIndex),
+      nextSlide,
+      ...currentSlides.slice(insertIndex),
+    ], slideAspectRatio);
+
+    setSlides(nextSlides);
+    activeScopeRef.current = nextSlide.id;
+    setActiveSlideId(nextSlide.id);
+    setSelectedIds([]);
+    setTextEditor(null);
+    setHistory((current) => ({ ...current, present: [] }));
+  }, [activeSlideId, elements, slideAspectRatio, slides]);
+
+  const deleteSlide = useCallback(
+    (slideId: string) => {
+      const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
+      const deleteIndex = currentSlides.findIndex((slide) => slide.id === slideId);
+      if (deleteIndex < 0) {
+        return;
+      }
+
+      const nextSlides = reflowSlideFrames(currentSlides.filter((slide) => slide.id !== slideId), slideAspectRatio);
+      setSlides(nextSlides);
+
+      if (activeSlideId !== slideId) {
+        const nextActiveSlide = activeSlideId ? nextSlides.find((slide) => slide.id === activeSlideId) ?? null : null;
+        setHistory((current) => ({
+          ...pruneHistoryScope(current, slideId),
+          present: cloneElements(nextActiveSlide?.elements ?? elements),
+        }));
+        return;
+      }
+
+      const nextActiveSlide = nextSlides[Math.min(deleteIndex, nextSlides.length - 1)] ?? null;
+      activeScopeRef.current = nextActiveSlide?.id ?? null;
+      setActiveSlideId(nextActiveSlide?.id ?? null);
+      setSelectedIds([]);
+      setTextEditor(null);
+      setHistory((current) => ({
+        ...pruneHistoryScope(current, slideId),
+        present: cloneElements(nextActiveSlide?.elements ?? freeboardElements),
+      }));
+    },
+    [activeSlideId, elements, freeboardElements, slideAspectRatio, slides]
+  );
+
+  const reorderSlides = useCallback(
+    (sourceSlideId: string, targetSlideId: string) => {
+      if (sourceSlideId === targetSlideId) {
+        return;
+      }
+
+      const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
+      const sourceIndex = currentSlides.findIndex((slide) => slide.id === sourceSlideId);
+      const targetIndex = currentSlides.findIndex((slide) => slide.id === targetSlideId);
+
+      if (sourceIndex < 0 || targetIndex < 0) {
+        return;
+      }
+
+      const orderedSlides = [...currentSlides];
+      const [movedSlide] = orderedSlides.splice(sourceIndex, 1);
+      orderedSlides.splice(targetIndex, 0, movedSlide);
+      const nextSlides = reflowSlideFrames(orderedSlides, slideAspectRatio);
+      setSlides(nextSlides);
+
+      if (activeSlideId) {
+        const nextActiveSlide = nextSlides.find((slide) => slide.id === activeSlideId);
+        if (nextActiveSlide) {
+          setHistory((current) => ({ ...current, present: cloneElements(nextActiveSlide.elements) }));
+        }
+      }
+    },
+    [activeSlideId, elements, slideAspectRatio, slides]
+  );
+
+  const duplicateSlide = useCallback(
+    (slideId: string) => {
+      const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
+      const sourceIndex = currentSlides.findIndex((slide) => slide.id === slideId);
+      if (sourceIndex < 0) {
+        return;
+      }
+
+      const sourceSlide = currentSlides[sourceIndex];
+      const sourceName = getSlideDisplayName(sourceSlide, sourceIndex);
+      const duplicatedSlide: Slide = {
+        ...sourceSlide,
+        id: `slide-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name: `${sourceName} copy`,
+        elements: duplicateElements(sourceSlide.elements, generateElementId),
+      };
+      const nextSlides = reflowSlideFrames([
+        ...currentSlides.slice(0, sourceIndex + 1),
+        duplicatedSlide,
+        ...currentSlides.slice(sourceIndex + 1),
+      ], slideAspectRatio);
+      const nextDuplicatedSlide = nextSlides.find((slide) => slide.id === duplicatedSlide.id) ?? duplicatedSlide;
+
+      setSlides(nextSlides);
+      activeScopeRef.current = duplicatedSlide.id;
+      setActiveSlideId(duplicatedSlide.id);
+      setSelectedIds([]);
+      setTextEditor(null);
+      setHistory((current) => ({ ...current, present: cloneElements(nextDuplicatedSlide.elements) }));
+    },
+    [activeSlideId, elements, slideAspectRatio, slides]
+  );
+
+  const renameSlide = useCallback((slideId: string, nextName: string) => {
+    const trimmedName = nextName.trim();
+    setSlides((current) =>
+      current.map((slide, index) =>
+        slide.id === slideId
+          ? {
+              ...slide,
+              name: trimmedName || getSlideDisplayName(slide, index),
+            }
+          : slide
+      )
+    );
+  }, []);
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
       const page = pageRef.current;
@@ -453,6 +824,173 @@ function WhiteboardPage({ onOpenSettings }: WhiteboardPageProps) {
     );
   };
 
+
+  const stopRecording = useCallback(() => {
+    const runtime = recordingRuntimeRef.current;
+    if (!runtime || runtime.recorder.state === 'inactive') {
+      return;
+    }
+
+    setRecordingStatus('stopping');
+    runtime.recorder.stop();
+  }, []);
+
+  const startRecording = useCallback(() => {
+    if (recordingRuntimeRef.current) {
+      return;
+    }
+
+    const rect = pageRef.current?.getBoundingClientRect();
+    const currentSlides = stageSlides;
+    const activeSlide = activeSlideId
+      ? currentSlides.find((slide) => slide.id === activeSlideId) ?? currentSlides[0] ?? null
+      : currentSlides[0] ?? null;
+    const recordingSlideId = activeSlide?.id ?? null;
+    const mode = currentSlides.length > 0 && activeSlide ? 'slide' : 'freeboard';
+    if (mode === 'slide' && !activeSlideId && recordingSlideId) {
+      activeScopeRef.current = recordingSlideId;
+      setActiveSlideId(recordingSlideId);
+      setSelectedIds([]);
+      setTextEditor(null);
+      setHistory((current) => ({
+        ...current,
+        present: cloneElements(activeSlide!.elements),
+      }));
+    }
+    const frame = mode === 'slide'
+      ? activeSlide!.frame
+      : getDefaultRecordingFrame(rect, viewport, slideAspectRatio);
+    const outputSize = getRecordingOutputSize(frame);
+    const canvas = document.createElement('canvas');
+    canvas.width = outputSize.width;
+    canvas.height = outputSize.height;
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      setRecordingError('Canvas recording is not available in this browser.');
+      return;
+    }
+
+    if (typeof canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
+      setRecordingError('MediaRecorder is not available in this browser.');
+      return;
+    }
+
+    const canvasStream = canvas.captureStream(RECORDING_FPS);
+    const stream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...(cameraSettingsRef.current.audioDeviceId ? microphoneStream?.getAudioTracks() ?? [] : []),
+    ]);
+    const mimeType = getSupportedRecordingMimeType();
+    let recorder: MediaRecorder;
+
+    try {
+      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    } catch {
+      stream.getVideoTracks().forEach((track) => track.stop());
+      setRecordingError('Recording could not be started in this browser.');
+      return;
+    }
+    const chunks: Blob[] = [];
+    const runtime: RecordingRuntime = {
+      canvas,
+      context,
+      stream,
+      recorder,
+      chunks,
+      frame,
+      mode,
+      animationFrameId: null,
+    };
+
+    recordingRuntimeRef.current = runtime;
+    recordingRenderStateRef.current = {
+      slides: currentSlides,
+      activeSlideId: mode === 'slide' ? recordingSlideId : activeSlideId,
+      elements,
+      slideAspectRatio,
+      viewport,
+      transition: null,
+    };
+    previousActiveSlideIdRef.current = mode === 'slide' ? recordingSlideId : activeSlideId;
+    setRecordingError(null);
+    setRecordingFrame(mode === 'freeboard' ? frame : null);
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunks.push(event.data);
+      }
+    };
+
+    recorder.onerror = () => {
+      setRecordingError('Recording failed. Please try again.');
+    };
+
+    recorder.onstop = () => {
+      if (runtime.animationFrameId !== null) {
+        cancelAnimationFrame(runtime.animationFrameId);
+      }
+      runtime.stream.getVideoTracks().forEach((track) => track.stop());
+      recordingRuntimeRef.current = null;
+      setRecordingFrame(null);
+      setRecordingStatus('idle');
+
+      if (chunks.length === 0) {
+        setRecordingError('No video data was recorded.');
+        return;
+      }
+
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+      downloadRecordingBlob(blob);
+    };
+
+    const renderFrame = () => {
+      const state = recordingRenderStateRef.current;
+      if (state) {
+        drawRecordingFrame(
+          runtime.context,
+          runtime.canvas,
+          runtime.frame,
+          runtime.mode,
+          state,
+          imageCacheRef.current,
+          cameraSettingsRef.current,
+          cameraRecordingVideoRef.current,
+          recordingBackgroundRef.current.color,
+          recordingVisualSettingsRef.current,
+          recordingPointerRef.current
+        );
+      }
+
+      runtime.animationFrameId = requestAnimationFrame(renderFrame);
+    };
+
+    renderFrame();
+
+    try {
+      recorder.start(250);
+      setRecordingStatus('recording');
+    } catch {
+      if (runtime.animationFrameId !== null) {
+        cancelAnimationFrame(runtime.animationFrameId);
+      }
+      runtime.stream.getVideoTracks().forEach((track) => track.stop());
+      recordingRuntimeRef.current = null;
+      setRecordingFrame(null);
+      setRecordingError('Recording could not be started in this browser.');
+    }
+  }, [activeSlideId, elements, microphoneStream, slideAspectRatio, stageSlides, viewport]);
+
+  const handleToggleRecording = useCallback(() => {
+    if (recordingStatus === 'recording') {
+      stopRecording();
+      return;
+    }
+
+    if (recordingStatus === 'idle') {
+      startRecording();
+    }
+  }, [recordingStatus, startRecording, stopRecording]);
   const handleToolbarColorChange = (patch: Partial<ColorStyle>) => {
     if (!patch.color) {
       return;
@@ -510,26 +1048,60 @@ function WhiteboardPage({ onOpenSettings }: WhiteboardPageProps) {
         canArrangeLayers={activeTool === 'select' && selectedIds.length > 0}
         onLayerAction={handleLayerAction}
       />
-      <FloatingControlBar onOpenSettings={onOpenSettings} />
+      <FloatingControlBar
+        onOpenSettings={onOpenSettings}
+        onToggleRecording={handleToggleRecording}
+        recordingStatus={recordingStatus}
+      />
+      <video
+        ref={cameraRecordingVideoRef}
+        className="board-camera-capture-video"
+        muted
+        playsInline
+        aria-hidden="true"
+      />
 
       <div className="board-page__stage">
         <WhiteboardStage
           activeTool={activeTool}
           elements={elements}
+          slides={stageSlides}
+          freeboardElements={stageFreeboardElements}
+          activeSlideId={activeSlideId}
+          recordingFrame={recordingStatus !== 'idle' && stageSlides.length === 0 ? recordingFrame : null}
+          cameraSettings={cameraSettings}
+          cameraStream={cameraStream}
+          onCameraSettingsChange={onCameraSettingsChange}
+          onRecordingPointerChange={(state) => {
+            recordingPointerRef.current = state;
+          }}
           selectedIds={selectedIds}
           selectedBounds={selectedBounds}
           textDefaults={textDefaults}
           shapeDefaults={shapeDefaults}
           textEditor={textEditor}
           viewport={viewport}
+          onActiveSlideChange={activateScope}
           onActiveToolChange={setActiveTool}
           onCommitElementsChange={onCommitElementsChange}
+          getScopeElements={getScopeElements}
           onElementsChange={onElementsChange}
           onSelectedIdsChange={setSelectedIds}
           onTextEditorChange={setTextEditor}
           onViewportChange={setViewport}
         />
       </div>
+
+      <SlideNavigator
+        slides={stageSlides}
+        activeSlideId={activeSlideId}
+        onAddSlide={addSlide}
+        onDeleteSlide={deleteSlide}
+        onDuplicateSlide={duplicateSlide}
+        onRenameSlide={renameSlide}
+        onReorderSlide={reorderSlides}
+        onSelectSlide={activateScope}
+      />
 
       <ZoomControls
         zoom={viewport.zoom}
@@ -540,6 +1112,7 @@ function WhiteboardPage({ onOpenSettings }: WhiteboardPageProps) {
         onZoomTo={zoomTo}
         onRequestClear={requestClearBoard}
       />
+      {recordingError ? <div className="board-recording-error">{recordingError}</div> : null}
       {isClearConfirmOpen ? <ClearBoardConfirm onCancel={cancelClearBoard} onConfirm={confirmClearBoard} /> : null}
     </div>
   );
@@ -670,6 +1243,834 @@ function ClearBoardConfirm({ onCancel, onConfirm }: { onCancel: () => void; onCo
       </div>
     </div>
   );
+}
+function SlideNavigator({
+  slides,
+  activeSlideId,
+  onAddSlide,
+  onDeleteSlide,
+  onDuplicateSlide,
+  onRenameSlide,
+  onReorderSlide,
+  onSelectSlide,
+}: {
+  slides: Slide[];
+  activeSlideId: string | null;
+  onAddSlide: () => void;
+  onDeleteSlide: (slideId: string) => void;
+  onDuplicateSlide: (slideId: string) => void;
+  onRenameSlide: (slideId: string, nextName: string) => void;
+  onReorderSlide: (sourceSlideId: string, targetSlideId: string) => void;
+  onSelectSlide: (slideId: string) => void;
+}) {
+  const [draggingSlideId, setDraggingSlideId] = useState<string | null>(null);
+  const [dragOverSlideId, setDragOverSlideId] = useState<string | null>(null);
+  const [editingSlideId, setEditingSlideId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+
+  const beginRename = (slide: Slide) => {
+    setEditingSlideId(slide.id);
+    setRenameDraft(slide.name || '');
+  };
+
+  const cancelRename = () => {
+    setEditingSlideId(null);
+    setRenameDraft('');
+  };
+
+  const commitRename = () => {
+    if (!editingSlideId) {
+      return;
+    }
+
+    onRenameSlide(editingSlideId, renameDraft);
+    cancelRename();
+  };
+
+  return (
+    <aside className="slide-navigator" aria-label="Slide navigation">
+      <div className="slide-navigator__list">
+        {slides.map((slide, index) => {
+          const isActive = slide.id === activeSlideId;
+          const isEditing = editingSlideId === slide.id;
+          return (
+            <div
+              key={slide.id}
+              className={`slide-navigator__item${isActive ? ' slide-navigator__item--active' : ''}${
+                draggingSlideId === slide.id ? ' slide-navigator__item--dragging' : ''
+              }${dragOverSlideId === slide.id && draggingSlideId !== slide.id ? ' slide-navigator__item--drop-target' : ''}`}
+              draggable={!isEditing}
+              onDragStart={(event) => {
+                setDraggingSlideId(slide.id);
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', slide.id);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDragOverSlideId(slide.id);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setDragOverSlideId((current) => (current === slide.id ? null : current));
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceSlideId = draggingSlideId ?? event.dataTransfer.getData('text/plain');
+                setDraggingSlideId(null);
+                setDragOverSlideId(null);
+                if (sourceSlideId) {
+                  onReorderSlide(sourceSlideId, slide.id);
+                }
+              }}
+              onDragEnd={() => {
+                setDraggingSlideId(null);
+                setDragOverSlideId(null);
+              }}
+            >
+              <button type="button" className="slide-navigator__thumbnail-button" onClick={() => onSelectSlide(slide.id)}>
+                <SlideThumbnail slide={slide} />
+              </button>
+
+              <div className="slide-navigator__meta">
+                <span className="slide-navigator__page">{index + 1}</span>
+                {isEditing ? (
+                  <input
+                    className="slide-navigator__rename-input"
+                    value={renameDraft}
+                    autoFocus
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commitRename();
+                      }
+
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    draggable={false}
+                    className="slide-navigator__name"
+                    title="Double click to rename"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectSlide(slide.id);
+                    }}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      beginRename(slide);
+                    }}
+                  >
+                    {getSlideDisplayName(slide, index)}
+                  </button>
+                )}
+              </div>
+
+              <div className="slide-navigator__actions">
+                <button
+                  type="button"
+                  className="slide-navigator__action"
+                  aria-label="Rename slide"
+                  title="Rename slide"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    beginRename(slide);
+                  }}
+                >
+                  {'\u270e'}
+                </button>
+                <button
+                  type="button"
+                  className="slide-navigator__action"
+                  aria-label="Duplicate slide"
+                  title="Duplicate slide"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDuplicateSlide(slide.id);
+                  }}
+                >
+                  {'\u29c9'}
+                </button>
+                <button
+                  type="button"
+                  className="slide-navigator__action slide-navigator__action--danger"
+                  aria-label="Delete slide"
+                  title="Delete slide"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteSlide(slide.id);
+                  }}
+                >
+                  {'\u00d7'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button type="button" className="slide-navigator__add" onClick={onAddSlide}>
+        +
+      </button>
+    </aside>
+  );
+}
+function SlideThumbnail({ slide }: { slide: Slide }) {
+  const { frame } = slide;
+
+  return (
+    <svg
+      className="slide-navigator__thumbnail"
+      viewBox={`${frame.x} ${frame.y} ${frame.width} ${frame.height}`}
+      role="img"
+      aria-label={`${slide.name} preview`}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <rect className="slide-navigator__thumbnail-bg" {...frame} />
+      {slide.elements.map((element) => renderSlideThumbnailElement(element))}
+    </svg>
+  );
+}
+
+function renderSlideThumbnailElement(element: BoardElement) {
+  switch (element.type) {
+    case 'draw':
+      return (
+        <polyline
+          key={element.id}
+          className="slide-thumbnail-element slide-thumbnail-element--stroke"
+          style={{ stroke: getElementColor(element) }}
+          points={element.points.map((point) => [point.x, point.y].join(',')).join(' ')}
+        />
+      );
+    case 'rectangle': {
+      const box = normalizeThumbnailRect(element.x, element.y, element.width, element.height);
+      return <rect key={element.id} className="slide-thumbnail-element slide-thumbnail-element--shape" style={{ stroke: getElementColor(element) }} {...box} />;
+    }
+    case 'ellipse': {
+      const box = normalizeThumbnailRect(element.x, element.y, element.width, element.height);
+      return (
+        <ellipse
+          key={element.id}
+          className="slide-thumbnail-element slide-thumbnail-element--shape"
+          style={{ stroke: getElementColor(element) }}
+          cx={box.x + box.width / 2}
+          cy={box.y + box.height / 2}
+          rx={box.width / 2}
+          ry={box.height / 2}
+        />
+      );
+    }
+    case 'line':
+      return (
+        <line
+          key={element.id}
+          className="slide-thumbnail-element slide-thumbnail-element--line"
+          style={{ stroke: getElementColor(element) }}
+          x1={element.x1}
+          y1={element.y1}
+          x2={element.x2}
+          y2={element.y2}
+        />
+      );
+    case 'arrow': {
+      const geometry = getThumbnailArrowGeometry(element);
+      return (
+        <g key={element.id}>
+          <line
+            className="slide-thumbnail-element slide-thumbnail-element--line slide-thumbnail-element--arrow-shaft"
+            style={{ stroke: getElementColor(element) }}
+            x1={element.x1}
+            y1={element.y1}
+            x2={geometry?.shaftEnd.x ?? element.x2}
+            y2={geometry?.shaftEnd.y ?? element.y2}
+          />
+          {geometry ? <polygon className="slide-thumbnail-element--arrowhead" points={geometry.points} style={{ fill: getElementColor(element), stroke: getElementColor(element) }} /> : null}
+        </g>
+      );
+    }
+    case 'text':
+      return (
+        <foreignObject key={element.id} x={element.x} y={element.y} width={element.width} height={element.height}>
+          <div
+            className="slide-thumbnail-text"
+            style={{ fontFamily: element.fontFamily, fontSize: `${element.fontSize}px`, color: element.color }}
+          >
+            {element.text || 'Text'}
+          </div>
+        </foreignObject>
+      );
+    case 'image': {
+      const box = normalizeThumbnailRect(element.x, element.y, element.width, element.height);
+      return <image key={element.id} href={element.src} preserveAspectRatio="none" {...box} />;
+    }
+    default:
+      return null;
+  }
+}
+
+function normalizeThumbnailRect(x: number, y: number, width: number, height: number) {
+  const left = Math.min(x, x + width);
+  const top = Math.min(y, y + height);
+  return {
+    x: left,
+    y: top,
+    width: Math.abs(width),
+    height: Math.abs(height),
+  };
+}
+
+function getThumbnailArrowGeometry(element: LinearElement) {
+  const dx = element.x2 - element.x1;
+  const dy = element.y2 - element.y1;
+  const length = Math.hypot(dx, dy);
+
+  if (length < 0.001) {
+    return null;
+  }
+
+  const unitX = dx / length;
+  const unitY = dy / length;
+  const normalX = -unitY;
+  const normalY = unitX;
+  const headLength = 15;
+  const headHalfWidth = 7.5;
+  const baseX = element.x2 - unitX * headLength;
+  const baseY = element.y2 - unitY * headLength;
+  const leftX = baseX + normalX * headHalfWidth;
+  const leftY = baseY + normalY * headHalfWidth;
+  const rightX = baseX - normalX * headHalfWidth;
+  const rightY = baseY - normalY * headHalfWidth;
+
+  return {
+    points: `${element.x2},${element.y2} ${leftX},${leftY} ${rightX},${rightY}`,
+    shaftEnd: { x: baseX, y: baseY },
+  };
+}
+
+function getElementColor(element: BoardElement) {
+  return 'color' in element ? element.color : '#1f2937';
+}
+const RECORDING_FPS = 30;
+const RECORDING_TRANSITION_MS = 520;
+const RECORDING_OUTPUT_LONG_EDGE = 1280;
+const SLIDE_WIDTH = 960;
+const SLIDE_GAP = 96;
+const SLIDE_ORIGIN_X = 0;
+const SLIDE_ORIGIN_Y = 0;
+
+function createSlide(index: number, aspectRatio: number): Slide {
+  return {
+    id: `slide-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name: `Slide ${index + 1}`,
+    frame: getSlideFrame(index, aspectRatio),
+    elements: [],
+  };
+}
+
+function reflowSlideFrames(slides: Slide[], aspectRatio: number) {
+  return slides.map((slide, index) => {
+    const frame = getSlideFrame(index, aspectRatio);
+    const dx = frame.x - slide.frame.x;
+    const dy = frame.y - slide.frame.y;
+
+    return {
+      ...slide,
+      frame,
+      elements: dx || dy ? slide.elements.map((element) => offsetElement(element, dx, dy)) : slide.elements,
+    };
+  });
+}
+
+function materializeActiveSlideElements(slides: Slide[], activeSlideId: string | null, activeElements: BoardElement[]) {
+  if (!activeSlideId) {
+    return slides;
+  }
+
+  return slides.map((slide) =>
+    slide.id === activeSlideId
+      ? {
+          ...slide,
+          elements: cloneElements(activeElements),
+        }
+      : slide
+  );
+}
+
+function getSlideDisplayName(slide: Slide, index: number) {
+  return slide.name?.trim() || `Slide ${index + 1}`;
+}
+
+function getSlideFrame(index: number, aspectRatio: number) {
+  const safeRatio = Math.max(aspectRatio, 0.1);
+  const height = SLIDE_WIDTH / safeRatio;
+  return {
+    x: SLIDE_ORIGIN_X + index * (SLIDE_WIDTH + SLIDE_GAP),
+    y: SLIDE_ORIGIN_Y,
+    width: SLIDE_WIDTH,
+    height,
+  };
+}
+
+function getDefaultRecordingFrame(rect: DOMRect | undefined, viewport: ViewportState, aspectRatio: number): SlideFrame {
+  const viewportWidth = rect?.width ?? window.innerWidth;
+  const viewportHeight = rect?.height ?? window.innerHeight;
+  const worldWidth = viewportWidth / viewport.zoom;
+  const worldHeight = viewportHeight / viewport.zoom;
+  const safeRatio = Math.max(aspectRatio, 0.1);
+  const maxWidth = Math.min(960, worldWidth * 0.72);
+  const maxHeight = Math.min(720, worldHeight * 0.72);
+  let width = Math.min(maxWidth, maxHeight * safeRatio);
+  let height = width / safeRatio;
+
+  if (height > maxHeight) {
+    height = maxHeight;
+    width = height * safeRatio;
+  }
+
+  const centerX = (viewportWidth / 2 - viewport.x) / viewport.zoom;
+  const centerY = (viewportHeight / 2 - viewport.y) / viewport.zoom;
+
+  return {
+    x: centerX - width / 2,
+    y: centerY - height / 2,
+    width,
+    height,
+  };
+}
+
+function getRecordingOutputSize(frame: SlideFrame) {
+  const ratio = Math.max(frame.width / Math.max(frame.height, 1), 0.1);
+
+  if (ratio >= 1) {
+    return {
+      width: RECORDING_OUTPUT_LONG_EDGE,
+      height: Math.max(2, Math.round(RECORDING_OUTPUT_LONG_EDGE / ratio)),
+    };
+  }
+
+  return {
+    width: Math.max(2, Math.round(RECORDING_OUTPUT_LONG_EDGE * ratio)),
+    height: RECORDING_OUTPUT_LONG_EDGE,
+  };
+}
+
+function getSupportedRecordingMimeType() {
+  const candidates = [
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ];
+
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
+}
+
+function drawRecordingFrame(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  frame: SlideFrame,
+  mode: 'slide' | 'freeboard',
+  state: RecordingRenderState,
+  imageCache: Map<string, HTMLImageElement>,
+  cameraSettings: CameraSettings,
+  cameraVideo: HTMLVideoElement | null,
+  backgroundColor: string,
+  visualSettings: RecordingVisualSettings,
+  pointer: RecordingPointerState | null
+) {
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const transition = mode === 'slide' ? state.transition : null;
+  if (transition) {
+    const progress = Math.min(1, (performance.now() - transition.startTime) / RECORDING_TRANSITION_MS);
+    const eased = easeInOutCubic(progress);
+    const width = canvas.width;
+    drawRecordingSnapshot(
+      context,
+      canvas,
+      transition.from,
+      imageCache,
+      -eased * width * transition.direction,
+      backgroundColor,
+      visualSettings,
+      cameraSettings
+    );
+    drawRecordingSnapshot(
+      context,
+      canvas,
+      transition.to,
+      imageCache,
+      (1 - eased) * width * transition.direction,
+      backgroundColor,
+      visualSettings,
+      cameraSettings
+    );
+    drawRecordingPointer(context, canvas, frame, visualSettings, cameraSettings, pointer);
+    drawRecordingCameraOverlay(context, canvas, frame, visualSettings, cameraSettings, cameraVideo);
+
+    if (progress >= 1) {
+      state.transition = null;
+    }
+    return;
+  }
+
+  const snapshot = mode === 'slide' ? getActiveSlideRecordingSnapshot(state) : { frame, elements: state.elements };
+  if (snapshot) {
+    drawRecordingSnapshot(context, canvas, snapshot, imageCache, 0, backgroundColor, visualSettings, cameraSettings);
+  }
+  drawRecordingPointer(context, canvas, frame, visualSettings, cameraSettings, pointer);
+  drawRecordingCameraOverlay(context, canvas, frame, visualSettings, cameraSettings, cameraVideo);
+}
+
+function getActiveSlideRecordingSnapshot(state: RecordingRenderState): RecordingSnapshot | null {
+  const activeSlide = state.activeSlideId ? state.slides.find((slide) => slide.id === state.activeSlideId) : null;
+  return activeSlide ? { frame: activeSlide.frame, elements: activeSlide.elements } : null;
+}
+
+function drawRecordingSnapshot(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  snapshot: RecordingSnapshot,
+  imageCache: Map<string, HTMLImageElement>,
+  offsetX: number,
+  backgroundColor: string,
+  visualSettings: RecordingVisualSettings,
+  cameraSettings: CameraSettings
+) {
+  context.save();
+  context.beginPath();
+  context.rect(offsetX, 0, canvas.width, canvas.height);
+  context.clip();
+  context.translate(offsetX, 0);
+  context.fillStyle = backgroundColor;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const layout = getRecordingCompositionLayout(
+    { x: 0, y: 0, width: canvas.width, height: canvas.height },
+    snapshot.frame,
+    visualSettings,
+    cameraSettings
+  );
+  const canvasRect = layout.canvasRect;
+  context.beginPath();
+  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
+  context.fillStyle = '#ffffff';
+  context.fill();
+  context.clip();
+  context.translate(canvasRect.x, canvasRect.y);
+  context.scale(layout.scaleX, layout.scaleY);
+  context.translate(-snapshot.frame.x, -snapshot.frame.y);
+  snapshot.elements.forEach((element) => drawCanvasElement(context, element, imageCache));
+  context.restore();
+}
+
+function drawRecordingCameraOverlay(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  frame: SlideFrame,
+  visualSettings: RecordingVisualSettings,
+  settings: CameraSettings,
+  video: HTMLVideoElement | null
+) {
+  if (!settings.enabled) {
+    return;
+  }
+
+  const layout = getRecordingCompositionLayout(
+    { x: 0, y: 0, width: canvas.width, height: canvas.height },
+    frame,
+    visualSettings,
+    settings
+  );
+  const { x, y, width: size } = layout.cameraRect;
+
+  context.save();
+  context.beginPath();
+  if (settings.shape === 'circle') {
+    context.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+  } else {
+    addRoundedRectPath(context, x, y, size, size, layout.cameraRadius);
+  }
+  context.clip();
+
+  if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
+    const sourceRatio = video.videoWidth / video.videoHeight;
+    let sourceWidth = video.videoWidth;
+    let sourceHeight = video.videoHeight;
+    let sourceX = 0;
+    let sourceY = 0;
+
+    if (sourceRatio > 1) {
+      sourceWidth = video.videoHeight;
+      sourceX = (video.videoWidth - sourceWidth) / 2;
+    } else if (sourceRatio < 1) {
+      sourceHeight = video.videoWidth;
+      sourceY = (video.videoHeight - sourceHeight) / 2;
+    }
+
+    context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, x, y, size, size);
+  } else {
+    context.fillStyle = '#0f172a';
+    context.fillRect(x, y, size, size);
+    context.fillStyle = '#ffffff';
+    context.font = `${Math.max(14, size * 0.12)}px system-ui`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('Camera', x + size / 2, y + size / 2);
+  }
+
+  context.restore();
+}
+
+function drawRecordingPointer(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  frame: SlideFrame,
+  settings: RecordingVisualSettings,
+  cameraSettings: CameraSettings,
+  pointer: RecordingPointerState | null
+) {
+  if (settings.cursorEffect === 'none' || !pointer?.visible) {
+    return;
+  }
+
+  const layout = getRecordingCompositionLayout(
+    { x: 0, y: 0, width: canvas.width, height: canvas.height },
+    frame,
+    settings,
+    cameraSettings
+  );
+  const canvasRect = layout.canvasRect;
+  const x = canvasRect.x + (pointer.point.x - frame.x) * layout.scaleX;
+  const y = canvasRect.y + (pointer.point.y - frame.y) * layout.scaleY;
+
+  if (x < canvasRect.x || x > canvasRect.x + canvasRect.width || y < canvasRect.y || y > canvasRect.y + canvasRect.height) {
+    return;
+  }
+
+  context.save();
+  if (settings.cursorEffect === 'highlight') {
+    context.beginPath();
+    context.arc(x, y, pointer.pressed ? 18 : 13, 0, Math.PI * 2);
+    context.fillStyle = pointer.pressed ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.12)';
+    context.strokeStyle = 'rgba(239, 68, 68, 0.86)';
+    context.lineWidth = 2;
+    context.fill();
+    context.stroke();
+  } else {
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(x, y + 24);
+    context.lineTo(x + 7, y + 18);
+    context.lineTo(x + 12, y + 30);
+    context.lineTo(x + 17, y + 28);
+    context.lineTo(x + 12, y + 16);
+    context.lineTo(x + 22, y + 16);
+    context.closePath();
+    context.fillStyle = '#111827';
+    context.strokeStyle = '#ffffff';
+    context.lineWidth = 2.5;
+    context.stroke();
+    context.fill();
+  }
+  context.restore();
+}
+
+function addRoundedRectPath(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+
+  if (typeof context.roundRect === 'function') {
+    context.roundRect(x, y, width, height, safeRadius);
+    return;
+  }
+
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+}
+
+function drawCanvasElement(context: CanvasRenderingContext2D, element: BoardElement, imageCache: Map<string, HTMLImageElement>) {
+  context.save();
+  context.lineJoin = 'round';
+  context.lineCap = 'round';
+
+  switch (element.type) {
+    case 'draw':
+      if (element.points.length > 0) {
+        context.beginPath();
+        context.strokeStyle = element.color;
+        context.lineWidth = 3;
+        context.moveTo(element.points[0].x, element.points[0].y);
+        element.points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+        context.stroke();
+      }
+      break;
+    case 'rectangle': {
+      const box = normalizeCanvasRect(element.x, element.y, element.width, element.height);
+      context.strokeStyle = element.color;
+      context.lineWidth = 2.5;
+      context.strokeRect(box.x, box.y, box.width, box.height);
+      break;
+    }
+    case 'ellipse': {
+      const box = normalizeCanvasRect(element.x, element.y, element.width, element.height);
+      context.beginPath();
+      context.strokeStyle = element.color;
+      context.lineWidth = 2.5;
+      context.ellipse(box.x + box.width / 2, box.y + box.height / 2, box.width / 2, box.height / 2, 0, 0, Math.PI * 2);
+      context.stroke();
+      break;
+    }
+    case 'line':
+      drawCanvasLine(context, element.x1, element.y1, element.x2, element.y2, element.color);
+      break;
+    case 'arrow':
+      drawCanvasArrow(context, element);
+      break;
+    case 'text':
+      drawCanvasText(context, element);
+      break;
+    case 'image':
+      drawCanvasImage(context, element, imageCache);
+      break;
+    default:
+      break;
+  }
+
+  context.restore();
+}
+
+function drawCanvasLine(context: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, color: string) {
+  context.beginPath();
+  context.strokeStyle = color;
+  context.lineWidth = 2.5;
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+}
+
+function drawCanvasArrow(context: CanvasRenderingContext2D, element: LinearElement) {
+  const geometry = getCanvasArrowGeometry(element);
+  drawCanvasLine(context, element.x1, element.y1, geometry?.shaftEnd.x ?? element.x2, geometry?.shaftEnd.y ?? element.y2, element.color);
+
+  if (!geometry) {
+    return;
+  }
+
+  context.beginPath();
+  context.fillStyle = element.color;
+  context.strokeStyle = element.color;
+  context.lineWidth = 0.75;
+  context.moveTo(element.x2, element.y2);
+  context.lineTo(geometry.left.x, geometry.left.y);
+  context.lineTo(geometry.right.x, geometry.right.y);
+  context.closePath();
+  context.fill();
+  context.stroke();
+}
+
+function getCanvasArrowGeometry(element: LinearElement) {
+  const dx = element.x2 - element.x1;
+  const dy = element.y2 - element.y1;
+  const length = Math.hypot(dx, dy);
+
+  if (length < 0.001) {
+    return null;
+  }
+
+  const unitX = dx / length;
+  const unitY = dy / length;
+  const normalX = -unitY;
+  const normalY = unitX;
+  const headLength = 15;
+  const headHalfWidth = 7.5;
+  const baseX = element.x2 - unitX * headLength;
+  const baseY = element.y2 - unitY * headLength;
+
+  return {
+    shaftEnd: { x: baseX, y: baseY },
+    left: { x: baseX + normalX * headHalfWidth, y: baseY + normalY * headHalfWidth },
+    right: { x: baseX - normalX * headHalfWidth, y: baseY - normalY * headHalfWidth },
+  };
+}
+
+function drawCanvasText(context: CanvasRenderingContext2D, element: Extract<BoardElement, { type: 'text' }>) {
+  context.fillStyle = element.color;
+  context.font = `${element.fontSize}px ${element.fontFamily}`;
+  context.textBaseline = 'top';
+  const lineHeight = element.fontSize * 1.25;
+  element.text.split('\n').forEach((line, index) => {
+    context.fillText(line || ' ', element.x, element.y + index * lineHeight, element.width);
+  });
+}
+
+function drawCanvasImage(context: CanvasRenderingContext2D, element: ImageElement, imageCache: Map<string, HTMLImageElement>) {
+  const box = normalizeCanvasRect(element.x, element.y, element.width, element.height);
+  let image = imageCache.get(element.src);
+
+  if (!image) {
+    image = new Image();
+    image.src = element.src;
+    imageCache.set(element.src, image);
+  }
+
+  if (image.complete && image.naturalWidth > 0) {
+    context.drawImage(image, box.x, box.y, box.width, box.height);
+  }
+}
+
+function normalizeCanvasRect(x: number, y: number, width: number, height: number) {
+  const left = Math.min(x, x + width);
+  const top = Math.min(y, y + height);
+  return {
+    x: left,
+    y: top,
+    width: Math.abs(width),
+    height: Math.abs(height),
+  };
+}
+
+function easeInOutCubic(value: number) {
+  return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
+}
+
+function downloadRecordingBlob(blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `excalicord-recording-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function getNextManualZoom(currentZoom: number, direction: 1 | -1) {
   const stepPercent = ZOOM_BUTTON_STEP * 100;
@@ -834,6 +2235,26 @@ function serializeElements(elements: BoardElement[]) {
 
 function cloneElements(elements: BoardElement[]) {
   return structuredClone(elements);
+}
+
+function getScopeType(scopeId: string | null): ElementScopeType {
+  return scopeId === null ? 'freeboard' : 'slide';
+}
+
+function createHistoryEntry(scopeId: string | null, elements: BoardElement[]): ElementsHistoryEntry {
+  return {
+    scopeType: getScopeType(scopeId),
+    scopeId,
+    elements: cloneElements(elements),
+  };
+}
+
+function pruneHistoryScope(history: ElementsHistory, deletedScopeId: string): ElementsHistory {
+  return {
+    ...history,
+    past: history.past.filter((entry) => entry.scopeId !== deletedScopeId),
+    future: history.future.filter((entry) => entry.scopeId !== deletedScopeId),
+  };
 }
 
 async function readFileAsDataUrl(file: File) {

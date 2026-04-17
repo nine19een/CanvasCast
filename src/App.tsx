@@ -1,26 +1,235 @@
-﻿import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 import './whiteboard.css';
 import RecordingSettingsModal from './components/RecordingSettingsModal';
 import WhiteboardPage from './components/WhiteboardPage';
+import { DEFAULT_CAMERA_SETTINGS, DEFAULT_RECORDING_VISUAL_SETTINGS } from './cameraTypes';
+import type { CameraSettings, MediaDeviceChoice, RecordingVisualSettings } from './cameraTypes';
+import { aspectRatioOptions, backgroundOptions } from './mockOptions';
 
 function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeAspect, setActiveAspect] = useState('1:1');
+  const [activeBackgroundId, setActiveBackgroundId] = useState('bg-white');
+  const [cameraSettings, setCameraSettings] = useState<CameraSettings>(DEFAULT_CAMERA_SETTINGS);
+  const [recordingVisualSettings, setRecordingVisualSettings] =
+    useState<RecordingVisualSettings>(DEFAULT_RECORDING_VISUAL_SETTINGS);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceChoice[]>([]);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceChoice[]>([]);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [microphoneStream, setMicrophoneStream] = useState<MediaStream | null>(null);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const activeAspectItem = useMemo(
+    () => aspectRatioOptions.find((option) => option.key === activeAspect) ?? aspectRatioOptions[4],
+    [activeAspect]
+  );
+  const activeBackground = useMemo(
+    () => backgroundOptions.find((option) => option.id === activeBackgroundId) ?? backgroundOptions[0],
+    [activeBackgroundId]
+  );
+
+  const updateCameraSettings = useCallback((patch: Partial<CameraSettings>) => {
+    setCameraSettings((current) => ({ ...current, ...patch }));
+  }, []);
+
+  const updateRecordingVisualSettings = useCallback((patch: Partial<RecordingVisualSettings>) => {
+    setRecordingVisualSettings((current) => ({ ...current, ...patch }));
+  }, []);
+
+  const refreshDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setMediaError('当前浏览器不支持媒体设备枚举。');
+      return;
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setVideoDevices(
+        devices
+          .filter((device) => device.kind === 'videoinput')
+          .map((device, index) => ({
+            deviceId: device.deviceId,
+            label: device.label || `摄像头 ${index + 1}`,
+          }))
+      );
+      setAudioDevices(
+        devices
+          .filter((device) => device.kind === 'audioinput')
+          .map((device, index) => ({
+            deviceId: device.deviceId,
+            label: device.label || `麦克风 ${index + 1}`,
+          }))
+      );
+    } catch {
+      setMediaError('无法读取摄像头或麦克风设备列表。');
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDevices();
+
+    if (!navigator.mediaDevices?.addEventListener) {
+      return;
+    }
+
+    navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', refreshDevices);
+  }, [refreshDevices]);
+
+  useEffect(() => {
+    let disposed = false;
+    let nextStream: MediaStream | null = null;
+
+    if (!cameraSettings.enabled) {
+      setCameraStream((current) => {
+        current?.getTracks().forEach((track) => track.stop());
+        return null;
+      });
+      setMediaError(null);
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMediaError('当前浏览器不支持摄像头访问。');
+      return;
+    }
+
+    const videoConstraint: MediaTrackConstraints | boolean = cameraSettings.videoDeviceId
+      ? { deviceId: { exact: cameraSettings.videoDeviceId } }
+      : true;
+
+    navigator.mediaDevices
+      .getUserMedia({ video: videoConstraint, audio: false })
+      .then((stream) => {
+        if (disposed) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        nextStream = stream;
+        setMediaError(null);
+        setCameraStream((current) => {
+          current?.getTracks().forEach((track) => track.stop());
+          return stream;
+        });
+        refreshDevices();
+      })
+      .catch(() => {
+        if (!disposed) {
+          setCameraStream((current) => {
+            current?.getTracks().forEach((track) => track.stop());
+            return null;
+          });
+          setMediaError('摄像头打开失败，请检查权限或设备占用。');
+        }
+      });
+
+    return () => {
+      disposed = true;
+      nextStream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [cameraSettings.enabled, cameraSettings.videoDeviceId, refreshDevices]);
+
+  useEffect(() => {
+    let disposed = false;
+    let nextStream: MediaStream | null = null;
+
+    if (!cameraSettings.audioDeviceId) {
+      setMicrophoneStream((current) => {
+        current?.getTracks().forEach((track) => track.stop());
+        return null;
+      });
+      setMediaError(null);
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMediaError('当前浏览器不支持麦克风访问。');
+      return;
+    }
+
+    const audioConstraint: MediaTrackConstraints | boolean =
+      cameraSettings.audioDeviceId === 'default'
+        ? true
+        : { deviceId: { exact: cameraSettings.audioDeviceId } };
+
+    navigator.mediaDevices
+      .getUserMedia({ audio: audioConstraint, video: false })
+      .then((stream) => {
+        if (disposed) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        nextStream = stream;
+        setMediaError(null);
+        setMicrophoneStream((current) => {
+          current?.getTracks().forEach((track) => track.stop());
+          return stream;
+        });
+        refreshDevices();
+      })
+      .catch(() => {
+        if (!disposed) {
+          setMicrophoneStream((current) => {
+            current?.getTracks().forEach((track) => track.stop());
+            return null;
+          });
+          setMediaError('麦克风打开失败，请检查权限或设备占用。');
+        }
+      });
+
+    return () => {
+      disposed = true;
+      nextStream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [cameraSettings.audioDeviceId, refreshDevices]);
 
   return (
     <div className="app-shell">
-      <WhiteboardPage onOpenSettings={() => setSettingsOpen(true)} />
+      <WhiteboardPage
+        onOpenSettings={() => setSettingsOpen(true)}
+        slideAspectRatio={activeAspectItem.ratio}
+        cameraSettings={cameraSettings}
+        onCameraSettingsChange={updateCameraSettings}
+        cameraStream={cameraStream}
+        microphoneStream={microphoneStream}
+        recordingBackground={activeBackground}
+        recordingVisualSettings={recordingVisualSettings}
+      />
 
       {settingsOpen && (
         <div className="settings-overlay">
           <button
             type="button"
             className="settings-overlay__backdrop"
-            aria-label="关闭设置"
+            aria-label="鍏抽棴璁剧疆"
             onClick={() => setSettingsOpen(false)}
           />
-          <div className="settings-overlay__content">
-            <RecordingSettingsModal onClose={() => setSettingsOpen(false)} />
+          <div
+            className="settings-overlay__content"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setSettingsOpen(false);
+              }
+            }}
+          >
+            <RecordingSettingsModal
+              activeAspect={activeAspect}
+              onAspectChange={setActiveAspect}
+              activeBackgroundId={activeBackgroundId}
+              onBackgroundChange={setActiveBackgroundId}
+              recordingVisualSettings={recordingVisualSettings}
+              onRecordingVisualSettingsChange={updateRecordingVisualSettings}
+              cameraSettings={cameraSettings}
+              onCameraSettingsChange={updateCameraSettings}
+              videoDevices={videoDevices}
+              audioDevices={audioDevices}
+              cameraStream={cameraStream}
+              mediaError={mediaError}
+              onRefreshDevices={refreshDevices}
+              onClose={() => setSettingsOpen(false)}
+            />
           </div>
         </div>
       )}
@@ -29,4 +238,3 @@ function App() {
 }
 
 export default App;
-
