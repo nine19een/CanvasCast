@@ -69,13 +69,20 @@ type RecordingStatus = 'idle' | 'preparing' | 'recording' | 'paused';
 type RecordingSnapshot = {
   frame: SlideFrame;
   elements: BoardElement[];
+  name?: string;
 };
 
 type RecordingTransition = {
-  from: RecordingSnapshot;
-  to: RecordingSnapshot;
-  direction: 1 | -1;
+  fromSlideId: string;
+  toSlideId: string;
+  fromIndex: number;
+  toIndex: number;
+  firstIndex: number;
+  lastIndex: number;
+  direction: 'next' | 'prev';
   startTime: number;
+  duration: number;
+  snapshots: RecordingSnapshot[];
 };
 
 type RecordingRuntime = {
@@ -105,6 +112,12 @@ type RecordingPointerState = {
   };
   pressed: boolean;
   visible: boolean;
+};
+
+type RecordingTarget = {
+  frame: SlideFrame;
+  mode: 'slide' | 'freeboard';
+  slideId: string | null;
 };
 
 function WhiteboardPage({
@@ -143,9 +156,12 @@ function WhiteboardPage({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>('idle');
   const [recordingFrame, setRecordingFrame] = useState<SlideFrame | null>(null);
+  const [recordingTarget, setRecordingTarget] = useState<RecordingTarget | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
   const [isTeleprompterOpen, setIsTeleprompterOpen] = useState(false);
+  const [slideTransition, setSlideTransition] = useState<RecordingTransition | null>(null);
+  const [slideTransitionTick, setSlideTransitionTick] = useState(0);
   const recordingRuntimeRef = useRef<RecordingRuntime | null>(null);
   const recordingRenderStateRef = useRef<RecordingRenderState | null>(null);
   const previousActiveSlideIdRef = useRef<string | null>(activeSlideId);
@@ -158,6 +174,7 @@ function WhiteboardPage({
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingAccumulatedMsRef = useRef(0);
   const recordingTimerRef = useRef<number | null>(null);
+  const normalViewportBeforeRecordingRef = useRef<ViewportState | null>(null);
 
   const elements = history.present;
   const clearRecordingTimer = useCallback(() => {
@@ -560,9 +577,47 @@ function WhiteboardPage({
         };
   }, []);
 
-  const applyZoomAtScreenPoint = useCallback((resolveNextZoom: (currentZoom: number) => number, anchor: { x: number; y: number }) => {
-    setViewport((current) => zoomViewportAtScreenPoint(current, resolveNextZoom(current.zoom), anchor));
+  const getRecordingPresentationViewport = useCallback((frame: SlideFrame): ViewportState => {
+    const rect = pageRef.current?.getBoundingClientRect();
+    const viewportWidth = rect?.width ?? window.innerWidth;
+    const viewportHeight = rect?.height ?? window.innerHeight;
+    const safeFrameWidth = Math.max(frame.width, 1);
+    const safeFrameHeight = Math.max(frame.height, 1);
+    const margins = {
+      left: 72,
+      right: 236,
+      top: 118,
+      bottom: 112,
+    };
+    const availableWidth = Math.max(240, viewportWidth - margins.left - margins.right);
+    const availableHeight = Math.max(180, viewportHeight - margins.top - margins.bottom);
+    const nextZoom = clampZoom(Math.min(availableWidth / safeFrameWidth, availableHeight / safeFrameHeight), 0.4, 1.6);
+    const screenCenterX = margins.left + availableWidth / 2;
+    const screenCenterY = margins.top + availableHeight / 2;
+
+    return {
+      x: screenCenterX - (frame.x + safeFrameWidth / 2) * nextZoom,
+      y: screenCenterY - (frame.y + safeFrameHeight / 2) * nextZoom,
+      zoom: nextZoom,
+    };
   }, []);
+
+  const restoreNormalViewport = useCallback(() => {
+    const previousViewport = normalViewportBeforeRecordingRef.current;
+    normalViewportBeforeRecordingRef.current = null;
+
+    if (previousViewport) {
+      setViewport(previousViewport);
+    }
+  }, []);
+
+  const applyZoomAtScreenPoint = useCallback((resolveNextZoom: (currentZoom: number) => number, anchor: { x: number; y: number }) => {
+    if (recordingStatus !== 'idle') {
+      return;
+    }
+
+    setViewport((current) => zoomViewportAtScreenPoint(current, resolveNextZoom(current.zoom), anchor));
+  }, [recordingStatus]);
 
   const zoomOut = useCallback(() => {
     applyZoomAtScreenPoint((currentZoom) => getNextManualZoom(currentZoom, -1), getViewportCenterAnchor());
@@ -573,10 +628,18 @@ function WhiteboardPage({
   }, [applyZoomAtScreenPoint, getViewportCenterAnchor]);
 
   const zoomTo = useCallback((nextZoom: number) => {
+    if (recordingStatus !== 'idle') {
+      return;
+    }
+
     applyZoomAtScreenPoint(() => nextZoom, getViewportCenterAnchor());
-  }, [applyZoomAtScreenPoint, getViewportCenterAnchor]);
+  }, [applyZoomAtScreenPoint, getViewportCenterAnchor, recordingStatus]);
 
   const fitContent = useCallback(() => {
+    if (recordingStatus !== 'idle') {
+      return;
+    }
+
     const rect = pageRef.current?.getBoundingClientRect();
 
     if (!rect || elements.length === 0) {
@@ -585,7 +648,7 @@ function WhiteboardPage({
     }
 
     setViewport(fitViewportToElements(elements, rect.width, rect.height));
-  }, [elements]);
+  }, [elements, recordingStatus]);
 
   const requestClearBoard = useCallback(() => {
     if (elements.length === 0) {
@@ -621,57 +684,56 @@ function WhiteboardPage({
   );
 
   const recordingRenderState = useMemo<RecordingRenderState>(
-    () => {
-      const recordingActiveSlideId =
-        recordingStatus !== 'idle' && stageSlides.length > 0 ? activeSlideId ?? stageSlides[0]?.id ?? null : activeSlideId;
-
-      return {
-        slides: stageSlides,
-        activeSlideId: recordingActiveSlideId,
-        elements,
-        slideAspectRatio,
-        viewport,
-        transition: recordingRenderStateRef.current?.transition ?? null,
-      };
-    },
-    [activeSlideId, elements, recordingStatus, slideAspectRatio, stageSlides, viewport]
+    () => ({
+      slides: stageSlides,
+      activeSlideId: recordingStatus !== 'idle' && recordingTarget?.mode === 'slide' ? recordingTarget.slideId : activeSlideId,
+      elements,
+      slideAspectRatio,
+      viewport,
+      transition: slideTransition,
+    }),
+    [activeSlideId, elements, recordingStatus, recordingTarget, slideAspectRatio, slideTransition, stageSlides, viewport]
   );
 
   useEffect(() => {
     recordingRenderStateRef.current = {
       ...recordingRenderState,
-      transition: recordingRenderStateRef.current?.transition ?? null,
+      transition: slideTransition,
     };
-  }, [recordingRenderState]);
+  }, [recordingRenderState, slideTransition]);
+  const isRecordingViewportLocked = recordingStatus !== 'idle';
+  const isSlideStructureLocked = recordingStatus === 'recording' || recordingStatus === 'paused';
 
-  useEffect(() => {
-    const previousSlideId = previousActiveSlideIdRef.current;
+  const getFreeboardRecordingTarget = useCallback((): RecordingTarget => {
+    const rect = pageRef.current?.getBoundingClientRect();
+    return {
+      frame: getDefaultRecordingFrame(rect, normalViewportBeforeRecordingRef.current ?? viewport, slideAspectRatio),
+      mode: 'freeboard',
+      slideId: null,
+    };
+  }, [slideAspectRatio, viewport]);
 
-    if (recordingStatus === 'recording' && previousSlideId && activeSlideId && previousSlideId !== activeSlideId && stageSlides.length > 0) {
-      const previousSlide = stageSlides.find((slide) => slide.id === previousSlideId);
-      const nextSlide = stageSlides.find((slide) => slide.id === activeSlideId);
-      const previousIndex = stageSlides.findIndex((slide) => slide.id === previousSlideId);
-      const nextIndex = stageSlides.findIndex((slide) => slide.id === activeSlideId);
-
-      if (previousSlide && nextSlide) {
-        const transition: RecordingTransition = {
-          from: { frame: previousSlide.frame, elements: cloneElements(previousSlide.elements) },
-          to: { frame: nextSlide.frame, elements: cloneElements(nextSlide.elements) },
-          direction: nextIndex >= previousIndex ? 1 : -1,
-          startTime: performance.now(),
-        };
-        recordingRenderStateRef.current = {
-          ...(recordingRenderStateRef.current ?? recordingRenderState),
-          transition,
-        };
+  const syncPreparingRecordingTarget = useCallback(
+    (target: RecordingTarget) => {
+      if (recordingStatus !== 'preparing') {
+        return;
       }
+
+      setRecordingTarget(target);
+      setRecordingFrame(target.frame);
+      setViewport(getRecordingPresentationViewport(target.frame));
+    },
+    [getRecordingPresentationViewport, recordingStatus]
+  );
+
+  const addSlide = useCallback(() => {
+    if (isSlideStructureLocked) {
+      return;
     }
 
-    previousActiveSlideIdRef.current = activeSlideId;
-  }, [activeSlideId, recordingRenderState, recordingStatus, stageSlides]);
-  const addSlide = useCallback(() => {
     const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
-    const activeIndex = activeSlideId ? currentSlides.findIndex((slide) => slide.id === activeSlideId) : currentSlides.length - 1;
+    const anchorSlideId = recordingStatus === 'preparing' && recordingTarget?.mode === 'slide' ? recordingTarget.slideId : activeSlideId;
+    const activeIndex = anchorSlideId ? currentSlides.findIndex((slide) => slide.id === anchorSlideId) : currentSlides.length - 1;
     const insertIndex = Math.max(0, activeIndex + 1);
     const nextSlide = createSlide(insertIndex, slideAspectRatio);
     const nextSlides = reflowSlideFrames([
@@ -679,6 +741,7 @@ function WhiteboardPage({
       nextSlide,
       ...currentSlides.slice(insertIndex),
     ], slideAspectRatio);
+    const nextActiveSlide = nextSlides.find((slide) => slide.id === nextSlide.id) ?? nextSlide;
 
     setSlides(nextSlides);
     activeScopeRef.current = nextSlide.id;
@@ -686,10 +749,19 @@ function WhiteboardPage({
     setSelectedIds([]);
     setTextEditor(null);
     setHistory((current) => ({ ...current, present: [] }));
-  }, [activeSlideId, elements, slideAspectRatio, slides]);
+    syncPreparingRecordingTarget({
+      frame: nextActiveSlide.frame,
+      mode: 'slide',
+      slideId: nextActiveSlide.id,
+    });
+  }, [activeSlideId, elements, isSlideStructureLocked, recordingStatus, recordingTarget, slideAspectRatio, slides, syncPreparingRecordingTarget]);
 
   const deleteSlide = useCallback(
     (slideId: string) => {
+      if (isSlideStructureLocked) {
+        return;
+      }
+
       const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
       const deleteIndex = currentSlides.findIndex((slide) => slide.id === slideId);
       if (deleteIndex < 0) {
@@ -698,6 +770,40 @@ function WhiteboardPage({
 
       const nextSlides = reflowSlideFrames(currentSlides.filter((slide) => slide.id !== slideId), slideAspectRatio);
       setSlides(nextSlides);
+
+      if (recordingStatus === 'preparing') {
+        const currentTargetSlideId = recordingTarget?.mode === 'slide' ? recordingTarget.slideId : null;
+        const targetSlide =
+          currentTargetSlideId && currentTargetSlideId !== slideId
+            ? nextSlides.find((slide) => slide.id === currentTargetSlideId) ?? null
+            : recordingTarget?.mode === 'freeboard'
+              ? null
+              : nextSlides[deleteIndex] ?? nextSlides[deleteIndex - 1] ?? null;
+        const nextTarget: RecordingTarget = recordingTarget?.mode === 'freeboard'
+          ? recordingTarget
+          : targetSlide
+          ? {
+              frame: targetSlide.frame,
+              mode: 'slide',
+              slideId: targetSlide.id,
+            }
+          : getFreeboardRecordingTarget();
+        const nextActiveSlide =
+          activeSlideId && activeSlideId !== slideId
+            ? nextSlides.find((slide) => slide.id === activeSlideId) ?? null
+            : targetSlide;
+
+        activeScopeRef.current = nextActiveSlide?.id ?? null;
+        setActiveSlideId(nextActiveSlide?.id ?? null);
+        setSelectedIds([]);
+        setTextEditor(null);
+        setHistory((current) => ({
+          ...pruneHistoryScope(current, slideId),
+          present: cloneElements(nextActiveSlide?.elements ?? freeboardElements),
+        }));
+        syncPreparingRecordingTarget(nextTarget);
+        return;
+      }
 
       if (activeSlideId !== slideId) {
         const nextActiveSlide = activeSlideId ? nextSlides.find((slide) => slide.id === activeSlideId) ?? null : null;
@@ -718,11 +824,26 @@ function WhiteboardPage({
         present: cloneElements(nextActiveSlide?.elements ?? freeboardElements),
       }));
     },
-    [activeSlideId, elements, freeboardElements, slideAspectRatio, slides]
+    [
+      activeSlideId,
+      elements,
+      freeboardElements,
+      getFreeboardRecordingTarget,
+      isSlideStructureLocked,
+      recordingStatus,
+      recordingTarget,
+      slideAspectRatio,
+      slides,
+      syncPreparingRecordingTarget,
+    ]
   );
 
   const reorderSlides = useCallback(
     (sourceSlideId: string, targetSlideId: string) => {
+      if (isSlideStructureLocked) {
+        return;
+      }
+
       if (sourceSlideId === targetSlideId) {
         return;
       }
@@ -747,12 +868,27 @@ function WhiteboardPage({
           setHistory((current) => ({ ...current, present: cloneElements(nextActiveSlide.elements) }));
         }
       }
+
+      if (recordingStatus === 'preparing' && recordingTarget?.mode === 'slide' && recordingTarget.slideId) {
+        const nextTargetSlide = nextSlides.find((slide) => slide.id === recordingTarget.slideId);
+        if (nextTargetSlide) {
+          syncPreparingRecordingTarget({
+            frame: nextTargetSlide.frame,
+            mode: 'slide',
+            slideId: nextTargetSlide.id,
+          });
+        }
+      }
     },
-    [activeSlideId, elements, slideAspectRatio, slides]
+    [activeSlideId, elements, isSlideStructureLocked, recordingStatus, recordingTarget, slideAspectRatio, slides, syncPreparingRecordingTarget]
   );
 
   const duplicateSlide = useCallback(
     (slideId: string) => {
+      if (isSlideStructureLocked) {
+        return;
+      }
+
       const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
       const sourceIndex = currentSlides.findIndex((slide) => slide.id === slideId);
       if (sourceIndex < 0) {
@@ -780,11 +916,20 @@ function WhiteboardPage({
       setSelectedIds([]);
       setTextEditor(null);
       setHistory((current) => ({ ...current, present: cloneElements(nextDuplicatedSlide.elements) }));
+      syncPreparingRecordingTarget({
+        frame: nextDuplicatedSlide.frame,
+        mode: 'slide',
+        slideId: nextDuplicatedSlide.id,
+      });
     },
-    [activeSlideId, elements, slideAspectRatio, slides]
+    [activeSlideId, elements, isSlideStructureLocked, slideAspectRatio, slides, syncPreparingRecordingTarget]
   );
 
   const renameSlide = useCallback((slideId: string, nextName: string) => {
+    if (isSlideStructureLocked) {
+      return;
+    }
+
     const trimmedName = nextName.trim();
     setSlides((current) =>
       current.map((slide, index) =>
@@ -796,7 +941,7 @@ function WhiteboardPage({
           : slide
       )
     );
-  }, []);
+  }, [isSlideStructureLocked]);
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
       const page = pageRef.current;
@@ -817,6 +962,10 @@ function WhiteboardPage({
 
       event.preventDefault();
       event.stopPropagation();
+      if (recordingStatus !== 'idle') {
+        return;
+      }
+
       const anchor = {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
@@ -827,7 +976,7 @@ function WhiteboardPage({
 
     window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
     return () => window.removeEventListener('wheel', handleWheel, { capture: true });
-  }, [applyZoomAtScreenPoint]);
+  }, [applyZoomAtScreenPoint, recordingStatus]);
 
   useEffect(() => {
     const handleZoomKeyDown = (event: KeyboardEvent) => {
@@ -850,6 +999,9 @@ function WhiteboardPage({
 
       event.preventDefault();
       event.stopPropagation();
+      if (recordingStatus !== 'idle') {
+        return;
+      }
 
       if (isZoomOutKey) {
         zoomOut();
@@ -860,7 +1012,7 @@ function WhiteboardPage({
 
     window.addEventListener('keydown', handleZoomKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleZoomKeyDown, { capture: true });
-  }, [zoomIn, zoomOut]);
+  }, [recordingStatus, zoomIn, zoomOut]);
 
 
   const handleLayerAction = useCallback(
@@ -1007,17 +1159,274 @@ function WhiteboardPage({
         };
   }, [activeSlideId, slideAspectRatio, stageSlides, viewport]);
 
+  const finishRecordingSlideTransition = useCallback(
+    (transition: RecordingTransition) => {
+      const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
+      const nextSlide = currentSlides.find((slide) => slide.id === transition.toSlideId);
+
+      if (!nextSlide) {
+        setSlideTransition(null);
+        recordingRenderStateRef.current = recordingRenderStateRef.current
+          ? {
+              ...recordingRenderStateRef.current,
+              transition: null,
+            }
+          : null;
+        return;
+      }
+
+      const nextTarget: RecordingTarget = {
+        frame: nextSlide.frame,
+        mode: 'slide',
+        slideId: nextSlide.id,
+      };
+
+      setSlides(currentSlides);
+      activeScopeRef.current = nextSlide.id;
+      setActiveSlideId(nextSlide.id);
+      setSelectedIds([]);
+      setTextEditor(null);
+      setHistory((current) => ({
+        ...current,
+        present: cloneElements(nextSlide.elements),
+      }));
+      setRecordingTarget(nextTarget);
+      setRecordingFrame(nextTarget.frame);
+      setViewport(getRecordingPresentationViewport(nextTarget.frame));
+      setSlideTransition(null);
+
+      if (recordingRuntimeRef.current) {
+        recordingRuntimeRef.current.frame = nextTarget.frame;
+        recordingRuntimeRef.current.mode = 'slide';
+      }
+
+      recordingRenderStateRef.current = {
+        ...(recordingRenderStateRef.current ?? {
+          slides: currentSlides,
+          activeSlideId: nextSlide.id,
+          elements: nextSlide.elements,
+          slideAspectRatio,
+          viewport,
+          transition: null,
+        }),
+        slides: currentSlides,
+        activeSlideId: nextSlide.id,
+        elements: nextSlide.elements,
+        transition: null,
+      };
+      previousActiveSlideIdRef.current = nextSlide.id;
+    },
+    [activeSlideId, elements, getRecordingPresentationViewport, slideAspectRatio, slides, viewport]
+  );
+
+  const switchRecordingSlide = useCallback(
+    (slideId: string) => {
+      if (slideTransition) {
+        return;
+      }
+
+      const currentSlides = materializeActiveSlideElements(slides, activeSlideId, elements);
+      const nextSlide = currentSlides.find((slide) => slide.id === slideId);
+
+      if (!nextSlide) {
+        return;
+      }
+
+      if (recordingStatus === 'idle' || recordingTarget?.mode !== 'slide' || !recordingTarget.slideId) {
+        setSlides(currentSlides);
+        activeScopeRef.current = nextSlide.id;
+        setActiveSlideId(nextSlide.id);
+        setSelectedIds([]);
+        setTextEditor(null);
+        setHistory((current) => ({
+          ...current,
+          present: cloneElements(nextSlide.elements),
+        }));
+
+        if (recordingStatus !== 'idle') {
+          const nextTarget: RecordingTarget = {
+            frame: nextSlide.frame,
+            mode: 'slide',
+            slideId: nextSlide.id,
+          };
+          setRecordingTarget(nextTarget);
+          setRecordingFrame(nextTarget.frame);
+          setViewport(getRecordingPresentationViewport(nextTarget.frame));
+        }
+        return;
+      }
+
+      const fromIndex = currentSlides.findIndex((slide) => slide.id === recordingTarget.slideId);
+      const toIndex = currentSlides.findIndex((slide) => slide.id === nextSlide.id);
+
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+        return;
+      }
+
+      const firstIndex = Math.max(0, Math.min(fromIndex, toIndex) - 1);
+      const lastIndex = Math.min(currentSlides.length - 1, Math.max(fromIndex, toIndex) + 1);
+      const transition: RecordingTransition = {
+        fromSlideId: recordingTarget.slideId,
+        toSlideId: nextSlide.id,
+        fromIndex,
+        toIndex,
+        firstIndex,
+        lastIndex,
+        direction: toIndex > fromIndex ? 'next' : 'prev',
+        startTime: performance.now(),
+        duration: getSlideTransitionDuration(Math.abs(toIndex - fromIndex)),
+        snapshots: currentSlides.slice(firstIndex, lastIndex + 1).map((slide, index) => ({
+          frame: slide.frame,
+          elements: cloneElements(slide.elements),
+          name: getSlideDisplayName(slide, firstIndex + index),
+        })),
+      };
+
+      setSlides(currentSlides);
+      setSlideTransition(transition);
+      recordingRenderStateRef.current = {
+        ...(recordingRenderStateRef.current ?? {
+          slides: currentSlides,
+          activeSlideId: recordingTarget.slideId,
+          elements,
+          slideAspectRatio,
+          viewport,
+          transition,
+        }),
+        slides: currentSlides,
+        transition,
+      };
+    },
+    [
+      activeSlideId,
+      elements,
+      getRecordingPresentationViewport,
+      recordingStatus,
+      recordingTarget,
+      slideAspectRatio,
+      slideTransition,
+      slides,
+      viewport,
+    ]
+  );
+
+  const handleActiveScopeChange = useCallback(
+    (scopeId: string | null) => {
+      if (recordingStatus !== 'idle' && scopeId) {
+        switchRecordingSlide(scopeId);
+        return;
+      }
+
+      activateScope(scopeId);
+    },
+    [activateScope, recordingStatus, switchRecordingSlide]
+  );
+
+  useEffect(() => {
+    if (!slideTransition) {
+      return;
+    }
+
+    let frameId: number | null = null;
+    const tick = () => {
+      const progress = getSlideTransitionProgress(slideTransition, performance.now());
+      setSlideTransitionTick(performance.now());
+
+      if (progress >= 1) {
+        finishRecordingSlideTransition(slideTransition);
+        return;
+      }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
+  }, [finishRecordingSlideTransition, slideTransition]);
+
   const enterRecordingPreparing = useCallback(() => {
     const target = getCurrentRecordingFrame();
+    normalViewportBeforeRecordingRef.current = viewport;
     setRecordingError(null);
-    setRecordingFrame(target.mode === 'freeboard' ? target.frame : null);
+    setRecordingTarget(target);
+    setRecordingFrame(target.frame);
+    setViewport(getRecordingPresentationViewport(target.frame));
     setRecordingStatus('preparing');
-  }, [getCurrentRecordingFrame]);
+  }, [getCurrentRecordingFrame, getRecordingPresentationViewport, viewport]);
 
   const cancelRecordingPreparing = useCallback(() => {
+    setRecordingTarget(null);
     setRecordingFrame(null);
     setRecordingStatus('idle');
-  }, []);
+    restoreNormalViewport();
+  }, [restoreNormalViewport]);
+
+  useEffect(() => {
+    if (recordingStatus === 'idle' || !recordingTarget) {
+      return;
+    }
+
+    const refitRecordingViewport = () => {
+      setViewport(getRecordingPresentationViewport(recordingTarget.frame));
+    };
+
+    refitRecordingViewport();
+    window.addEventListener('resize', refitRecordingViewport);
+    return () => window.removeEventListener('resize', refitRecordingViewport);
+  }, [getRecordingPresentationViewport, recordingStatus, recordingTarget]);
+
+  const recordingSlideIndex = useMemo(
+    () =>
+      recordingStatus !== 'idle' && recordingTarget?.mode === 'slide' && recordingTarget.slideId
+        ? stageSlides.findIndex((slide) => slide.id === recordingTarget.slideId)
+        : -1,
+    [recordingStatus, recordingTarget, stageSlides]
+  );
+
+  const goToRecordingSlideOffset = useCallback(
+    (offset: -1 | 1) => {
+      if (slideTransition || recordingStatus === 'idle' || recordingTarget?.mode !== 'slide' || recordingSlideIndex < 0) {
+        return;
+      }
+
+      const nextSlide = stageSlides[recordingSlideIndex + offset];
+      if (!nextSlide) {
+        return;
+      }
+
+      switchRecordingSlide(nextSlide.id);
+    },
+    [recordingSlideIndex, recordingStatus, recordingTarget, slideTransition, stageSlides, switchRecordingSlide]
+  );
+
+  useEffect(() => {
+    const handleRecordingSlideKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTypingTarget =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable;
+
+      if (isTypingTarget || recordingStatus === 'idle' || recordingTarget?.mode !== 'slide') {
+        return;
+      }
+
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      goToRecordingSlideOffset(event.key === 'ArrowLeft' ? -1 : 1);
+    };
+
+    window.addEventListener('keydown', handleRecordingSlideKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleRecordingSlideKeyDown, { capture: true });
+  }, [goToRecordingSlideOffset, recordingStatus, recordingTarget]);
 
   const handleToolbarTextStyleChange = (patch: Partial<TextStyle>) => {
     setTextDefaults((current) => ({ ...current, ...patch }));
@@ -1076,7 +1485,7 @@ function WhiteboardPage({
       return;
     }
 
-    const target = getCurrentRecordingFrame();
+    const target = recordingTarget ?? getCurrentRecordingFrame();
     const currentSlides = stageSlides;
     const activeSlide = target.slideId ? currentSlides.find((slide) => slide.id === target.slideId) ?? null : null;
     const recordingSlideId = target.slideId;
@@ -1101,6 +1510,8 @@ function WhiteboardPage({
     if (!context) {
       setRecordingStatus('idle');
       setRecordingFrame(null);
+      setRecordingTarget(null);
+      restoreNormalViewport();
       setRecordingError('Canvas recording is not available in this browser.');
       return;
     }
@@ -1108,6 +1519,8 @@ function WhiteboardPage({
     if (typeof canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
       setRecordingStatus('idle');
       setRecordingFrame(null);
+      setRecordingTarget(null);
+      restoreNormalViewport();
       setRecordingError('MediaRecorder is not available in this browser.');
       return;
     }
@@ -1126,6 +1539,8 @@ function WhiteboardPage({
       stream.getVideoTracks().forEach((track) => track.stop());
       setRecordingStatus('idle');
       setRecordingFrame(null);
+      setRecordingTarget(null);
+      restoreNormalViewport();
       setRecordingError('Recording could not be started in this browser.');
       return;
     }
@@ -1152,7 +1567,8 @@ function WhiteboardPage({
     };
     previousActiveSlideIdRef.current = mode === 'slide' ? recordingSlideId : activeSlideId;
     setRecordingError(null);
-    setRecordingFrame(mode === 'freeboard' ? frame : null);
+    setRecordingTarget(target);
+    setRecordingFrame(frame);
 
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
@@ -1171,8 +1587,10 @@ function WhiteboardPage({
       runtime.stream.getVideoTracks().forEach((track) => track.stop());
       recordingRuntimeRef.current = null;
       setRecordingFrame(null);
+      setRecordingTarget(null);
       setRecordingStatus('idle');
       resetRecordingTimer();
+      restoreNormalViewport();
 
       if (chunks.length === 0) {
         setRecordingError('No video data was recorded.');
@@ -1219,10 +1637,12 @@ function WhiteboardPage({
       runtime.stream.getVideoTracks().forEach((track) => track.stop());
       recordingRuntimeRef.current = null;
       setRecordingFrame(null);
+      setRecordingTarget(null);
       resetRecordingTimer();
+      restoreNormalViewport();
       setRecordingError('Recording could not be started in this browser.');
     }
-  }, [activeSlideId, elements, getCurrentRecordingFrame, microphoneStream, resetRecordingTimer, stageSlides, startRecordingTimer]);
+  }, [activeSlideId, elements, getCurrentRecordingFrame, microphoneStream, recordingTarget, resetRecordingTimer, restoreNormalViewport, stageSlides, startRecordingTimer, viewport]);
   const handleToolbarColorChange = (patch: Partial<ColorStyle>) => {
     if (!patch.color) {
       return;
@@ -1322,6 +1742,8 @@ function WhiteboardPage({
           activeSlideId={activeSlideId}
           recordingFrame={recordingFrame}
           recordingOverlayStatus={recordingStatus}
+          recordingSlideTransition={slideTransition}
+          recordingSlideTransitionNow={slideTransitionTick}
           cameraSettings={cameraSettings}
           cameraStream={cameraStream}
           onCameraSettingsChange={onCameraSettingsChange}
@@ -1334,7 +1756,7 @@ function WhiteboardPage({
           shapeDefaults={shapeDefaults}
           textEditor={textEditor}
           viewport={viewport}
-          onActiveSlideChange={activateScope}
+          onActiveSlideChange={handleActiveScopeChange}
           onActiveToolChange={setActiveTool}
           onCommitElementsChange={onCommitElementsChange}
           onCommitElementOwnerMigration={onCommitElementOwnerMigration}
@@ -1349,17 +1771,30 @@ function WhiteboardPage({
       <SlideNavigator
         slides={stageSlides}
         activeSlideId={activeSlideId}
+        isStructureLocked={isSlideStructureLocked}
         onAddSlide={addSlide}
         onDeleteSlide={deleteSlide}
         onDuplicateSlide={duplicateSlide}
         onRenameSlide={renameSlide}
         onReorderSlide={reorderSlides}
-        onSelectSlide={activateScope}
+        onSelectSlide={handleActiveScopeChange}
       />
+
+      {recordingStatus !== 'idle' && recordingTarget?.mode === 'slide' && recordingFrame ? (
+        <RecordingSlideSwitchButtons
+          frame={recordingFrame}
+          viewport={viewport}
+          hasPrevious={!slideTransition && recordingSlideIndex > 0}
+          hasNext={!slideTransition && recordingSlideIndex >= 0 && recordingSlideIndex < stageSlides.length - 1}
+          onPrevious={() => goToRecordingSlideOffset(-1)}
+          onNext={() => goToRecordingSlideOffset(1)}
+        />
+      ) : null}
 
       <ZoomControls
         zoom={viewport.zoom}
         canClear={elements.length > 0}
+        locked={isRecordingViewportLocked}
         onZoomOut={zoomOut}
         onZoomIn={zoomIn}
         onFitContent={fitContent}
@@ -1372,9 +1807,55 @@ function WhiteboardPage({
   );
 }
 
+function RecordingSlideSwitchButtons({
+  frame,
+  viewport,
+  hasPrevious,
+  hasNext,
+  onPrevious,
+  onNext,
+}: {
+  frame: SlideFrame;
+  viewport: ViewportState;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  const centerY = (frame.y + frame.height / 2) * viewport.zoom + viewport.y;
+  const previousLeft = frame.x * viewport.zoom + viewport.x - 58;
+  const nextLeft = (frame.x + frame.width) * viewport.zoom + viewport.x + 18;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="board-recording-slide-button board-recording-slide-button--previous"
+        style={{ left: previousLeft, top: centerY }}
+        onClick={onPrevious}
+        disabled={!hasPrevious}
+        aria-label="Previous slide"
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        className="board-recording-slide-button board-recording-slide-button--next"
+        style={{ left: nextLeft, top: centerY }}
+        onClick={onNext}
+        disabled={!hasNext}
+        aria-label="Next slide"
+      >
+        ›
+      </button>
+    </>
+  );
+}
+
 function ZoomControls({
   zoom,
   canClear,
+  locked,
   onZoomOut,
   onZoomIn,
   onFitContent,
@@ -1383,6 +1864,7 @@ function ZoomControls({
 }: {
   zoom: number;
   canClear: boolean;
+  locked: boolean;
   onZoomOut: () => void;
   onZoomIn: () => void;
   onFitContent: () => void;
@@ -1390,6 +1872,7 @@ function ZoomControls({
   onRequestClear: () => void;
 }) {
   const percentage = Math.round(zoom * 100);
+  const lockedFitTitle = locked ? '录制模式下视图已自动适应当前录制区域' : '适应内容';
   const [isEditingZoom, setIsEditingZoom] = useState(false);
   const [zoomInput, setZoomInput] = useState(String(percentage));
 
@@ -1417,7 +1900,7 @@ function ZoomControls({
       aria-label="Canvas zoom controls"
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <button type="button" className="board-zoom-controls__button" onClick={onZoomOut} disabled={zoom <= MIN_VIEWPORT_ZOOM}>
+      <button type="button" className="board-zoom-controls__button" onClick={onZoomOut} disabled={locked || zoom <= MIN_VIEWPORT_ZOOM}>
         -
       </button>
       {isEditingZoom ? (
@@ -1447,6 +1930,10 @@ function ZoomControls({
           aria-label="Edit zoom percentage"
           title="Edit zoom percentage"
           onClick={() => {
+            if (locked) {
+              return;
+            }
+
             setZoomInput(String(percentage));
             setIsEditingZoom(true);
           }}
@@ -1454,10 +1941,10 @@ function ZoomControls({
           {percentage}%
         </button>
       )}
-      <button type="button" className="board-zoom-controls__button" onClick={onZoomIn} disabled={zoom >= MAX_VIEWPORT_ZOOM}>
+      <button type="button" className="board-zoom-controls__button" onClick={onZoomIn} disabled={locked || zoom >= MAX_VIEWPORT_ZOOM}>
         +
       </button>
-      <button type="button" className="board-zoom-controls__fit" onClick={onFitContent}>
+      <button type="button" className="board-zoom-controls__fit" onClick={onFitContent} disabled={locked} title={lockedFitTitle}>
         {'\u9002\u5e94\u5185\u5bb9'}
       </button>
       <button
@@ -1501,6 +1988,7 @@ function ClearBoardConfirm({ onCancel, onConfirm }: { onCancel: () => void; onCo
 function SlideNavigator({
   slides,
   activeSlideId,
+  isStructureLocked,
   onAddSlide,
   onDeleteSlide,
   onDuplicateSlide,
@@ -1510,6 +1998,7 @@ function SlideNavigator({
 }: {
   slides: Slide[];
   activeSlideId: string | null;
+  isStructureLocked: boolean;
   onAddSlide: () => void;
   onDeleteSlide: (slideId: string) => void;
   onDuplicateSlide: (slideId: string) => void;
@@ -1521,8 +2010,24 @@ function SlideNavigator({
   const [dragOverSlideId, setDragOverSlideId] = useState<string | null>(null);
   const [editingSlideId, setEditingSlideId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const lockedTitle = isStructureLocked ? '\u5f55\u5236\u4e2d\u4e0d\u80fd\u4fee\u6539\u5e7b\u706f\u7247\u7ed3\u6784' : undefined;
+
+  useEffect(() => {
+    if (!isStructureLocked) {
+      return;
+    }
+
+    setDraggingSlideId(null);
+    setDragOverSlideId(null);
+    setEditingSlideId(null);
+    setRenameDraft('');
+  }, [isStructureLocked]);
 
   const beginRename = (slide: Slide) => {
+    if (isStructureLocked) {
+      return;
+    }
+
     setEditingSlideId(slide.id);
     setRenameDraft(slide.name || '');
   };
@@ -1533,7 +2038,8 @@ function SlideNavigator({
   };
 
   const commitRename = () => {
-    if (!editingSlideId) {
+    if (!editingSlideId || isStructureLocked) {
+      cancelRename();
       return;
     }
 
@@ -1553,13 +2059,22 @@ function SlideNavigator({
               className={`slide-navigator__item${isActive ? ' slide-navigator__item--active' : ''}${
                 draggingSlideId === slide.id ? ' slide-navigator__item--dragging' : ''
               }${dragOverSlideId === slide.id && draggingSlideId !== slide.id ? ' slide-navigator__item--drop-target' : ''}`}
-              draggable={!isEditing}
+              draggable={!isEditing && !isStructureLocked}
               onDragStart={(event) => {
+                if (isStructureLocked) {
+                  event.preventDefault();
+                  return;
+                }
+
                 setDraggingSlideId(slide.id);
                 event.dataTransfer.effectAllowed = 'move';
                 event.dataTransfer.setData('text/plain', slide.id);
               }}
               onDragOver={(event) => {
+                if (isStructureLocked) {
+                  return;
+                }
+
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
                 setDragOverSlideId(slide.id);
@@ -1571,6 +2086,12 @@ function SlideNavigator({
               }}
               onDrop={(event) => {
                 event.preventDefault();
+                if (isStructureLocked) {
+                  setDraggingSlideId(null);
+                  setDragOverSlideId(null);
+                  return;
+                }
+
                 const sourceSlideId = draggingSlideId ?? event.dataTransfer.getData('text/plain');
                 setDraggingSlideId(null);
                 setDragOverSlideId(null);
@@ -1615,7 +2136,8 @@ function SlideNavigator({
                     type="button"
                     draggable={false}
                     className="slide-navigator__name"
-                    title="Double click to rename"
+                    title={lockedTitle ?? 'Double click to rename'}
+                    disabled={isStructureLocked}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -1637,7 +2159,8 @@ function SlideNavigator({
                   type="button"
                   className="slide-navigator__action"
                   aria-label="Rename slide"
-                  title="Rename slide"
+                  title={lockedTitle ?? 'Rename slide'}
+                  disabled={isStructureLocked}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1650,7 +2173,8 @@ function SlideNavigator({
                   type="button"
                   className="slide-navigator__action"
                   aria-label="Duplicate slide"
-                  title="Duplicate slide"
+                  title={lockedTitle ?? 'Duplicate slide'}
+                  disabled={isStructureLocked}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1663,7 +2187,8 @@ function SlideNavigator({
                   type="button"
                   className="slide-navigator__action slide-navigator__action--danger"
                   aria-label="Delete slide"
-                  title="Delete slide"
+                  title={lockedTitle ?? 'Delete slide'}
+                  disabled={isStructureLocked}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1677,7 +2202,13 @@ function SlideNavigator({
           );
         })}
       </div>
-      <button type="button" className="slide-navigator__add" onClick={onAddSlide}>
+      <button
+        type="button"
+        className="slide-navigator__add"
+        onClick={onAddSlide}
+        disabled={isStructureLocked}
+        title={lockedTitle}
+      >
         +
       </button>
     </aside>
@@ -1820,7 +2351,10 @@ function getElementColor(element: BoardElement) {
   return 'color' in element ? element.color : '#1f2937';
 }
 const RECORDING_FPS = 30;
-const RECORDING_TRANSITION_MS = 520;
+const SLIDE_TRANSITION_BASE_MS = 260;
+const SLIDE_TRANSITION_PER_PAGE_MS = 80;
+const SLIDE_TRANSITION_MAX_MS = 520;
+const SLIDE_TRANSITION_GAP_RATIO = 0.12;
 const RECORDING_OUTPUT_LONG_EDGE = 1280;
 const SLIDE_WIDTH = 960;
 const SLIDE_GAP = 96;
@@ -1952,25 +2486,12 @@ function drawRecordingFrame(
 
   const transition = mode === 'slide' ? state.transition : null;
   if (transition) {
-    const progress = Math.min(1, (performance.now() - transition.startTime) / RECORDING_TRANSITION_MS);
-    const eased = easeInOutCubic(progress);
-    const width = canvas.width;
-    drawRecordingSnapshot(
+    drawRecordingSlideTransition(
       context,
       canvas,
-      transition.from,
+      frame,
+      transition,
       imageCache,
-      -eased * width * transition.direction,
-      backgroundColor,
-      visualSettings,
-      cameraSettings
-    );
-    drawRecordingSnapshot(
-      context,
-      canvas,
-      transition.to,
-      imageCache,
-      (1 - eased) * width * transition.direction,
       backgroundColor,
       visualSettings,
       cameraSettings
@@ -1978,9 +2499,6 @@ function drawRecordingFrame(
     drawRecordingPointer(context, canvas, frame, visualSettings, cameraSettings, pointer);
     drawRecordingCameraOverlay(context, canvas, frame, visualSettings, cameraSettings, cameraVideo);
 
-    if (progress >= 1) {
-      state.transition = null;
-    }
     return;
   }
 
@@ -1995,6 +2513,46 @@ function drawRecordingFrame(
 function getActiveSlideRecordingSnapshot(state: RecordingRenderState): RecordingSnapshot | null {
   const activeSlide = state.activeSlideId ? state.slides.find((slide) => slide.id === state.activeSlideId) : null;
   return activeSlide ? { frame: activeSlide.frame, elements: activeSlide.elements } : null;
+}
+
+function drawRecordingSlideTransition(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  frame: SlideFrame,
+  transition: RecordingTransition,
+  imageCache: Map<string, HTMLImageElement>,
+  backgroundColor: string,
+  visualSettings: RecordingVisualSettings,
+  cameraSettings: CameraSettings
+) {
+  context.fillStyle = backgroundColor;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const layout = getRecordingCompositionLayout(
+    { x: 0, y: 0, width: canvas.width, height: canvas.height },
+    frame,
+    visualSettings,
+    cameraSettings
+  );
+  const canvasRect = layout.canvasRect;
+  const firstIndex = transition.firstIndex;
+  const fromTrackPosition = transition.fromIndex - firstIndex;
+  const toTrackPosition = transition.toIndex - firstIndex;
+  const progress = getSlideTransitionProgress(transition, performance.now());
+  const eased = easeSlideTransition(progress);
+  const currentTrackPosition = fromTrackPosition + (toTrackPosition - fromTrackPosition) * eased;
+  const step = canvasRect.width + getSlideTransitionGap(canvasRect.width);
+
+  context.save();
+  context.beginPath();
+  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
+  context.clip();
+
+  transition.snapshots.forEach((snapshot, index) => {
+    drawRecordingSnapshotContent(context, snapshot, imageCache, layout, (index - currentTrackPosition) * step);
+  });
+
+  context.restore();
 }
 
 function drawRecordingSnapshot(
@@ -2021,6 +2579,28 @@ function drawRecordingSnapshot(
     cameraSettings
   );
   const canvasRect = layout.canvasRect;
+  context.beginPath();
+  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
+  context.fillStyle = '#ffffff';
+  context.fill();
+  context.clip();
+  context.translate(canvasRect.x, canvasRect.y);
+  context.scale(layout.scaleX, layout.scaleY);
+  context.translate(-snapshot.frame.x, -snapshot.frame.y);
+  snapshot.elements.forEach((element) => drawCanvasElement(context, element, imageCache));
+  context.restore();
+}
+
+function drawRecordingSnapshotContent(
+  context: CanvasRenderingContext2D,
+  snapshot: RecordingSnapshot,
+  imageCache: Map<string, HTMLImageElement>,
+  layout: ReturnType<typeof getRecordingCompositionLayout>,
+  offsetX: number
+) {
+  const canvasRect = layout.canvasRect;
+  context.save();
+  context.translate(offsetX, 0);
   context.beginPath();
   addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
   context.fillStyle = '#ffffff';
@@ -2312,8 +2892,23 @@ function normalizeCanvasRect(x: number, y: number, width: number, height: number
   };
 }
 
-function easeInOutCubic(value: number) {
-  return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
+function easeSlideTransition(value: number) {
+  return 1 - Math.pow(1 - value, 3);
+}
+
+function getSlideTransitionDuration(pageDistance: number) {
+  return Math.min(
+    SLIDE_TRANSITION_MAX_MS,
+    SLIDE_TRANSITION_BASE_MS + Math.max(0, pageDistance - 1) * SLIDE_TRANSITION_PER_PAGE_MS
+  );
+}
+
+function getSlideTransitionProgress(transition: RecordingTransition, now: number) {
+  return Math.min(1, Math.max(0, (now - transition.startTime) / Math.max(transition.duration, 1)));
+}
+
+function getSlideTransitionGap(width: number) {
+  return width * SLIDE_TRANSITION_GAP_RATIO;
 }
 
 function downloadRecordingBlob(blob: Blob) {
