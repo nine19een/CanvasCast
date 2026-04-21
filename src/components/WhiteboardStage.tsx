@@ -406,7 +406,6 @@ function WhiteboardStage({
           recordingSlideTransitionNow || performance.now()
         )
       : null;
-  const isRecordingPresentationMode = Boolean(recordingPresentationStrip);
   const cameraFrame = recordingOverlayFrame ?? activeSlide?.frame ?? getVisibleWorldFrame(surfaceRef.current, viewport);
   const cameraRect = cameraFrame ? getCameraWorldRect(cameraSettings, cameraFrame) : null;
   const cameraOverlayStyle =
@@ -1218,7 +1217,9 @@ function WhiteboardStage({
                     transform={`translate(${displayFrame.x} ${displayFrame.y}) scale(${displayFrame.width / Math.max(snapshot.frame.width, 1)} ${displayFrame.height / Math.max(snapshot.frame.height, 1)}) translate(${-snapshot.frame.x} ${-snapshot.frame.y})`}
                   >
                     {snapshot.elements.map((element) =>
-                      editingElement?.type === 'text' && element.id === editingElement.id ? null : renderElement(element)
+                      element.id === activeSlideDrawingElement?.id || (editingElement?.type === 'text' && element.id === editingElement.id)
+                        ? null
+                        : renderElement(element)
                     )}
                   </g>
                 </g>
@@ -1233,7 +1234,7 @@ function WhiteboardStage({
                 </g>
               ))}
 
-          {!isRecordingPresentationMode && activeSlideDrawingElement ? renderElement(activeSlideDrawingElement) : null}
+          {activeSlideDrawingElement ? renderElement(activeSlideDrawingElement) : null}
 
           <g mask="url(#freeboard-slide-mask)">
             {stagedCollections.freeboardElements.map((element) =>

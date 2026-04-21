@@ -1359,13 +1359,18 @@ function WhiteboardPage({
   const handleActiveScopeChange = useCallback(
     (scopeId: string | null) => {
       if (recordingStatus !== 'idle' && scopeId) {
+        if (recordingTarget?.mode === 'slide' && recordingTarget.slideId === scopeId) {
+          activateScope(scopeId);
+          return;
+        }
+
         switchRecordingSlide(scopeId);
         return;
       }
 
       activateScope(scopeId);
     },
-    [activateScope, recordingStatus, switchRecordingSlide]
+    [activateScope, recordingStatus, recordingTarget, switchRecordingSlide]
   );
 
   useEffect(() => {
