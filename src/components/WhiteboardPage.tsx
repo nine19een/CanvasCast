@@ -1531,10 +1531,14 @@ function WhiteboardPage({
       ...(cameraSettingsRef.current.audioDeviceId ? microphoneStream?.getAudioTracks() ?? [] : []),
     ]);
     const mimeType = getSupportedRecordingMimeType();
+    const recorderOptions = {
+      ...(mimeType ? { mimeType } : {}),
+      videoBitsPerSecond: RECORDING_VIDEO_BITS_PER_SECOND,
+    };
     let recorder: MediaRecorder;
 
     try {
-      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      recorder = new MediaRecorder(stream, recorderOptions);
     } catch {
       stream.getVideoTracks().forEach((track) => track.stop());
       setRecordingStatus('idle');
@@ -2351,6 +2355,7 @@ function getElementColor(element: BoardElement) {
   return 'color' in element ? element.color : '#1f2937';
 }
 const RECORDING_FPS = 30;
+const RECORDING_VIDEO_BITS_PER_SECOND = 20_000_000;
 const SLIDE_TRANSITION_BASE_MS = 260;
 const SLIDE_TRANSITION_PER_PAGE_MS = 80;
 const SLIDE_TRANSITION_MAX_MS = 520;
@@ -2525,31 +2530,25 @@ function drawRecordingSlideTransition(
   visualSettings: RecordingVisualSettings,
   cameraSettings: CameraSettings
 ) {
-  context.fillStyle = backgroundColor;
-  context.fillRect(0, 0, canvas.width, canvas.height);
-
-  const layout = getRecordingCompositionLayout(
+  const layout = getStableRecordingCompositionLayout(
     { x: 0, y: 0, width: canvas.width, height: canvas.height },
     frame,
     visualSettings,
     cameraSettings
   );
   const canvasRect = layout.canvasRect;
-  const firstIndex = transition.firstIndex;
-  const fromTrackPosition = transition.fromIndex - firstIndex;
-  const toTrackPosition = transition.toIndex - firstIndex;
-  const progress = getSlideTransitionProgress(transition, performance.now());
-  const eased = easeSlideTransition(progress);
-  const currentTrackPosition = fromTrackPosition + (toTrackPosition - fromTrackPosition) * eased;
-  const step = canvasRect.width + getSlideTransitionGap(canvasRect.width);
+  const visualCenterIndex = getSlideTransitionVisualCenterIndex(transition, performance.now());
+  const step = getSlideTransitionStep(canvasRect.width);
+
+  drawFixedRecordingBackground(context, layout, backgroundColor);
+  drawFixedCanvasSurface(context, layout);
 
   context.save();
-  context.beginPath();
-  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
-  context.clip();
+  clipToRecordingCanvas(context, layout);
 
   transition.snapshots.forEach((snapshot, index) => {
-    drawRecordingSnapshotContent(context, snapshot, imageCache, layout, (index - currentTrackPosition) * step);
+    const absoluteIndex = transition.firstIndex + index;
+    drawRecordingSnapshotContent(context, snapshot, imageCache, layout, (absoluteIndex - visualCenterIndex) * step);
   });
 
   context.restore();
@@ -2565,29 +2564,23 @@ function drawRecordingSnapshot(
   visualSettings: RecordingVisualSettings,
   cameraSettings: CameraSettings
 ) {
-  context.save();
-  context.beginPath();
-  context.rect(offsetX, 0, canvas.width, canvas.height);
-  context.clip();
-  context.translate(offsetX, 0);
-  context.fillStyle = backgroundColor;
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  const layout = getRecordingCompositionLayout(
+  const layout = getStableRecordingCompositionLayout(
     { x: 0, y: 0, width: canvas.width, height: canvas.height },
     snapshot.frame,
     visualSettings,
     cameraSettings
   );
-  const canvasRect = layout.canvasRect;
+  context.save();
   context.beginPath();
-  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
-  context.fillStyle = '#ffffff';
-  context.fill();
+  context.rect(offsetX, 0, canvas.width, canvas.height);
   context.clip();
-  context.translate(canvasRect.x, canvasRect.y);
-  context.scale(layout.scaleX, layout.scaleY);
-  context.translate(-snapshot.frame.x, -snapshot.frame.y);
-  snapshot.elements.forEach((element) => drawCanvasElement(context, element, imageCache));
+  context.translate(offsetX, 0);
+  drawFixedRecordingBackground(context, layout, backgroundColor);
+  drawFixedCanvasSurface(context, layout);
+  context.save();
+  clipToRecordingCanvas(context, layout);
+  drawRecordingSnapshotContent(context, snapshot, imageCache, layout, 0);
+  context.restore();
   context.restore();
 }
 
@@ -2599,18 +2592,70 @@ function drawRecordingSnapshotContent(
   offsetX: number
 ) {
   const canvasRect = layout.canvasRect;
+
   context.save();
-  context.translate(offsetX, 0);
-  context.beginPath();
-  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
-  context.fillStyle = '#ffffff';
-  context.fill();
-  context.clip();
-  context.translate(canvasRect.x, canvasRect.y);
+  context.translate(canvasRect.x + offsetX, canvasRect.y);
   context.scale(layout.scaleX, layout.scaleY);
   context.translate(-snapshot.frame.x, -snapshot.frame.y);
   snapshot.elements.forEach((element) => drawCanvasElement(context, element, imageCache));
   context.restore();
+}
+
+function getStableRecordingCompositionLayout(
+  backgroundRect: { x: number; y: number; width: number; height: number },
+  frame: SlideFrame,
+  visualSettings: RecordingVisualSettings,
+  cameraSettings: CameraSettings
+) {
+  const layout = getRecordingCompositionLayout(roundRecordingRect(backgroundRect), frame, visualSettings, cameraSettings);
+  const canvasRect = roundRecordingRect(layout.canvasRect);
+  const safeFrameWidth = Math.max(frame.width, 1);
+  const safeFrameHeight = Math.max(frame.height, 1);
+
+  return {
+    ...layout,
+    backgroundRect: roundRecordingRect(layout.backgroundRect),
+    canvasRect,
+    cameraRect: roundRecordingRect(layout.cameraRect),
+    canvasRadius: Math.round(layout.canvasRadius),
+    cameraRadius: Math.round(layout.cameraRadius),
+    scaleX: canvasRect.width / safeFrameWidth,
+    scaleY: canvasRect.height / safeFrameHeight,
+  };
+}
+
+function roundRecordingRect(rect: { x: number; y: number; width: number; height: number }) {
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
+
+function drawFixedRecordingBackground(
+  context: CanvasRenderingContext2D,
+  layout: ReturnType<typeof getStableRecordingCompositionLayout>,
+  backgroundColor: string
+) {
+  const { backgroundRect } = layout;
+  context.fillStyle = backgroundColor;
+  context.fillRect(backgroundRect.x, backgroundRect.y, backgroundRect.width, backgroundRect.height);
+}
+
+function drawFixedCanvasSurface(context: CanvasRenderingContext2D, layout: ReturnType<typeof getStableRecordingCompositionLayout>) {
+  const { canvasRect } = layout;
+  context.beginPath();
+  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
+  context.fillStyle = '#ffffff';
+  context.fill();
+}
+
+function clipToRecordingCanvas(context: CanvasRenderingContext2D, layout: ReturnType<typeof getStableRecordingCompositionLayout>) {
+  const { canvasRect } = layout;
+  context.beginPath();
+  addRoundedRectPath(context, canvasRect.x, canvasRect.y, canvasRect.width, canvasRect.height, layout.canvasRadius);
+  context.clip();
 }
 
 function drawRecordingCameraOverlay(
@@ -2625,7 +2670,7 @@ function drawRecordingCameraOverlay(
     return;
   }
 
-  const layout = getRecordingCompositionLayout(
+  const layout = getStableRecordingCompositionLayout(
     { x: 0, y: 0, width: canvas.width, height: canvas.height },
     frame,
     visualSettings,
@@ -2683,7 +2728,7 @@ function drawRecordingPointer(
     return;
   }
 
-  const layout = getRecordingCompositionLayout(
+  const layout = getStableRecordingCompositionLayout(
     { x: 0, y: 0, width: canvas.width, height: canvas.height },
     frame,
     settings,
@@ -2907,8 +2952,18 @@ function getSlideTransitionProgress(transition: RecordingTransition, now: number
   return Math.min(1, Math.max(0, (now - transition.startTime) / Math.max(transition.duration, 1)));
 }
 
+function getSlideTransitionVisualCenterIndex(transition: RecordingTransition, now: number) {
+  const progress = getSlideTransitionProgress(transition, now);
+  const eased = easeSlideTransition(progress);
+  return transition.fromIndex + (transition.toIndex - transition.fromIndex) * eased;
+}
+
 function getSlideTransitionGap(width: number) {
   return width * SLIDE_TRANSITION_GAP_RATIO;
+}
+
+function getSlideTransitionStep(width: number) {
+  return width + getSlideTransitionGap(width);
 }
 
 function downloadRecordingBlob(blob: Blob) {

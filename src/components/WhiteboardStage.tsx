@@ -297,20 +297,17 @@ function WhiteboardStage({
 
   const activeSlide = activeSlideId ? slides.find((slide) => slide.id === activeSlideId) ?? null : null;
   const recordingOverlayFrame = recordingOverlayStatus === 'idle' ? null : recordingFrame;
-  const recordingTransitionStrip =
-    recordingOverlayFrame && recordingSlideTransition
-      ? getRecordingTransitionStrip(recordingOverlayFrame, recordingSlideTransition, recordingSlideTransitionNow || performance.now())
+  const recordingPresentationStrip =
+    recordingOverlayFrame
+      ? getRecordingPresentationStrip(
+          recordingOverlayFrame,
+          slides,
+          activeSlideId,
+          recordingSlideTransition,
+          recordingSlideTransitionNow || performance.now()
+        )
       : null;
-  const recordingPresentationTitles = recordingOverlayFrame
-    ? getRecordingPresentationTitles(
-        recordingOverlayFrame,
-        slides,
-        activeSlideId,
-        recordingSlideTransition,
-        recordingSlideTransitionNow || performance.now()
-      )
-    : [];
-  const isRecordingSlideTransitioning = Boolean(recordingTransitionStrip);
+  const isRecordingPresentationMode = Boolean(recordingPresentationStrip);
   const cameraFrame = recordingOverlayFrame ?? activeSlide?.frame ?? getVisibleWorldFrame(surfaceRef.current, viewport);
   const cameraRect = cameraFrame ? getCameraWorldRect(cameraSettings, cameraFrame) : null;
   const cameraOverlayStyle =
@@ -978,19 +975,17 @@ function WhiteboardStage({
                 <rect {...recordingOverlayFrame} fill="black" />
               </mask>
             ) : null}
-            {recordingTransitionStrip?.slides.map(({ displayFrame, clipId }) => (
+            {recordingPresentationStrip?.slides.map(({ clipId }) => (
               <clipPath key={clipId} id={clipId}>
-                <rect {...displayFrame} />
+                <rect {...recordingOverlayFrame} />
               </clipPath>
             ))}
           </defs>
 
-          {recordingTransitionStrip
-            ? recordingTransitionStrip.slides.map(({ snapshot, displayFrame }) => (
-                <g key={`${recordingSlideTransition?.startTime}-${snapshot.frame.x}-transition-frame`}>
-                  <rect className="board-slide-frame" {...displayFrame} />
-                </g>
-              ))
+          {recordingPresentationStrip
+            ? recordingOverlayFrame
+              ? <rect className="board-slide-frame board-slide-frame--active" {...recordingOverlayFrame} />
+              : null
             : slides.map((slide) => (
                 <g key={`${slide.id}-frame-shell`}>
                   {!recordingOverlayFrame ? (
@@ -1010,9 +1005,9 @@ function WhiteboardStage({
                 </g>
               ))}
 
-          {recordingTransitionStrip
-            ? recordingTransitionStrip.slides.map(({ snapshot, displayFrame, clipId }, index) => (
-                <g key={`${recordingSlideTransition?.startTime}-${index}-transition-elements`} clipPath={`url(#${clipId})`}>
+          {recordingPresentationStrip
+            ? recordingPresentationStrip.slides.map(({ key, snapshot, displayFrame, clipId }) => (
+                <g key={`${key}-elements`} clipPath={`url(#${clipId})`}>
                   <g
                     transform={`translate(${displayFrame.x} ${displayFrame.y}) scale(${displayFrame.width / Math.max(snapshot.frame.width, 1)} ${displayFrame.height / Math.max(snapshot.frame.height, 1)}) translate(${-snapshot.frame.x} ${-snapshot.frame.y})`}
                   >
@@ -1032,7 +1027,7 @@ function WhiteboardStage({
                 </g>
               ))}
 
-          {!isRecordingSlideTransitioning && activeSlideDrawingElement ? renderElement(activeSlideDrawingElement) : null}
+          {!isRecordingPresentationMode && activeSlideDrawingElement ? renderElement(activeSlideDrawingElement) : null}
 
           <g mask="url(#freeboard-slide-mask)">
             {stagedCollections.freeboardElements.map((element) =>
@@ -1058,9 +1053,9 @@ function WhiteboardStage({
             />
           ) : null}
 
-          {recordingPresentationTitles.map(({ key, name, displayFrame }) => (
+          {recordingPresentationStrip?.slides.map(({ key, name, displayFrame }) => (
             <text
-              key={key}
+              key={`${key}-title`}
               className="board-slide-title"
               x={displayFrame.x + displayFrame.width / 2}
               y={displayFrame.y + displayFrame.height + 12}
@@ -1206,70 +1201,77 @@ function getVisibleWorldFrame(surface: HTMLDivElement | null, viewport: Viewport
   };
 }
 
-function getRecordingTransitionStrip(frame: SlideFrame, transition: RecordingSlideTransition, now: number) {
-  const progress = getRecordingTransitionProgress(transition, now);
-  const eased = easeRecordingTransition(progress);
-  const fromTrackPosition = transition.fromIndex - transition.firstIndex;
-  const toTrackPosition = transition.toIndex - transition.firstIndex;
-  const currentTrackPosition = fromTrackPosition + (toTrackPosition - fromTrackPosition) * eased;
-  const step = frame.width + getRecordingTransitionGap(frame.width);
-
-  return {
-    slides: transition.snapshots.map((snapshot, index) => ({
-      snapshot,
-      displayFrame: {
-        x: frame.x + (index - currentTrackPosition) * step,
-        y: frame.y,
-        width: frame.width,
-        height: frame.height,
-      },
-      clipId: getRecordingTransitionClipId(transition, index),
-    })),
-  };
-}
-
-function getRecordingPresentationTitles(
+function getRecordingPresentationStrip(
   frame: SlideFrame,
   slides: Slide[],
   activeSlideId: string | null,
   transition: RecordingSlideTransition | null,
   now: number
 ) {
+  const step = getRecordingPresentationStep(frame.width);
+
   if (transition) {
-    return getRecordingTransitionStrip(frame, transition, now).slides.map(({ snapshot, displayFrame }, index) => {
-      const absoluteIndex = transition.firstIndex + index;
-      return {
-        key: `recording-title-${transition.startTime}-${absoluteIndex}`,
-        name: snapshot.name?.trim() || `Slide ${absoluteIndex + 1}`,
-        displayFrame,
-        isPrimary: absoluteIndex === transition.toIndex,
-      };
-    });
+    const visualCenterIndex = getRecordingVisualCenterIndex(transition, now);
+    return {
+      slides: transition.snapshots.map((snapshot, index) => {
+        const absoluteIndex = transition.firstIndex + index;
+        return {
+          key: `recording-slide-${Math.round(transition.startTime)}-${absoluteIndex}`,
+          snapshot,
+          name: snapshot.name?.trim() || `Slide ${absoluteIndex + 1}`,
+          displayFrame: getRecordingPresentationDisplayFrame(frame, absoluteIndex, visualCenterIndex, step),
+          clipId: getRecordingPresentationClipId(transition, absoluteIndex),
+          isPrimary: absoluteIndex === transition.toIndex,
+        };
+      }),
+    };
   }
 
   const activeIndex = activeSlideId ? slides.findIndex((slide) => slide.id === activeSlideId) : -1;
   if (activeIndex < 0) {
-    return [];
+    return null;
   }
 
   const firstIndex = Math.max(0, activeIndex - 1);
   const lastIndex = Math.min(slides.length - 1, activeIndex + 1);
-  const step = frame.width + getRecordingTransitionGap(frame.width);
 
-  return slides.slice(firstIndex, lastIndex + 1).map((slide, index) => {
-    const absoluteIndex = firstIndex + index;
-    return {
-      key: `recording-title-${slide.id}`,
-      name: slide.name?.trim() || `Slide ${absoluteIndex + 1}`,
-      displayFrame: {
-        x: frame.x + (absoluteIndex - activeIndex) * step,
-        y: frame.y,
-        width: frame.width,
-        height: frame.height,
-      },
-      isPrimary: absoluteIndex === activeIndex,
-    };
-  });
+  return {
+    slides: slides.slice(firstIndex, lastIndex + 1).map((slide, index) => {
+      const absoluteIndex = firstIndex + index;
+      return {
+        key: `recording-slide-${slide.id}`,
+        snapshot: {
+          frame: slide.frame,
+          elements: slide.elements,
+          name: slide.name,
+        },
+        name: slide.name?.trim() || `Slide ${absoluteIndex + 1}`,
+        displayFrame: getRecordingPresentationDisplayFrame(frame, absoluteIndex, activeIndex, step),
+        clipId: `recording-presentation-${slide.id}`,
+        isPrimary: absoluteIndex === activeIndex,
+      };
+    }),
+  };
+}
+
+function getRecordingVisualCenterIndex(transition: RecordingSlideTransition, now: number) {
+  const progress = getRecordingTransitionProgress(transition, now);
+  const eased = easeRecordingTransition(progress);
+  return transition.fromIndex + (transition.toIndex - transition.fromIndex) * eased;
+}
+
+function getRecordingPresentationDisplayFrame(
+  frame: SlideFrame,
+  slideIndex: number,
+  visualCenterIndex: number,
+  step: number
+) {
+  return {
+    x: frame.x + (slideIndex - visualCenterIndex) * step,
+    y: frame.y,
+    width: frame.width,
+    height: frame.height,
+  };
 }
 
 function getRecordingTransitionProgress(transition: RecordingSlideTransition, now: number) {
@@ -1284,7 +1286,11 @@ function getRecordingTransitionGap(width: number) {
   return width * 0.12;
 }
 
-function getRecordingTransitionClipId(transition: RecordingSlideTransition, index: number) {
+function getRecordingPresentationStep(width: number) {
+  return width + getRecordingTransitionGap(width);
+}
+
+function getRecordingPresentationClipId(transition: RecordingSlideTransition, index: number) {
   return `recording-slide-transition-${Math.round(transition.startTime)}-${index}`;
 }
 
