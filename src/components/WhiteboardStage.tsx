@@ -236,12 +236,6 @@ function WhiteboardStage({
       : null;
 
   const isMarqueeSelecting = interaction?.type === 'selecting';
-  const isTransformingSelection =
-    interaction?.type === 'moving' ||
-    interaction?.type === 'resizing' ||
-    interaction?.type === 'rotating' ||
-    interaction?.type === 'drawing-shape' ||
-    interaction?.type === 'drawing-stroke';
 
   const activeSlideDrawingElement =
     activeSlideId && (interaction?.type === 'drawing-shape' || interaction?.type === 'drawing-stroke')
@@ -271,14 +265,6 @@ function WhiteboardStage({
     [elements, freeboardElements, provisionalOwners, slides]
   );
 
-  const multiSelectionHighlightElements = useMemo(() => {
-    if (isMarqueeSelecting || isTransformingSelection || selectedIds.length <= 1) {
-      return [];
-    }
-
-    const selectedSet = new Set(selectedIds);
-    return elements.filter((element) => selectedSet.has(element.id));
-  }, [elements, isMarqueeSelecting, isTransformingSelection, selectedIds]);
   const selectionOverlayBox = (() => {
     if (
       interaction?.type === 'resizing' &&
@@ -1292,7 +1278,6 @@ function WhiteboardStage({
 
           {selectionPreviewElements.map((element) => renderPreviewOverlay(element))}
 
-          {multiSelectionHighlightElements.map((element) => renderPreviewOverlay(element))}
 
           {selectionBox && (
             <rect
@@ -1321,8 +1306,6 @@ function WhiteboardStage({
                 ? renderLinearRotationHandle(selectedSingleElement)
                 : renderSelectionOverlay(selectionOverlayBox, selectionOverlayClassName, false, true)
               : null}
-
-          {!isMarqueeSelecting && !isTransformingSelection && selectedSingleElement && renderSingleSelectionOverlay(selectedSingleElement)}
 
 
           {!editingElement && !isMarqueeSelecting && selectedSingleElement && selectionOverlayBox
@@ -1967,152 +1950,19 @@ function getElementOpacity(element: BoardElement) {
 }
 
 function renderPreviewOverlay(element: BoardElement) {
+  const bounds = getTransformedElementBounds(element);
+
   return (
-    <g key={`${element.id}-preview`} transform={getElementSvgTransform(element)}>
-      {renderPreviewOverlayContent(element)}
-    </g>
+    <rect
+      key={`${element.id}-preview`}
+      className="board-element--preview-bounds"
+      x={bounds.x}
+      y={bounds.y}
+      width={bounds.width}
+      height={bounds.height}
+    />
   );
 }
-
-function renderPreviewOverlayContent(element: BoardElement) {
-  switch (element.type) {
-    case 'draw':
-      return (
-        <polyline
-          key={`${element.id}-preview`}
-          className="board-element--preview-stroke"
-          points={element.points.map((point) => [point.x, point.y].join(',')).join(' ')}
-        />
-      );
-    case 'rectangle': {
-      const box = normalizeRect(element.x, element.y, element.width, element.height);
-      return <rect key={`${element.id}-preview`} className="board-element--preview-shape" {...box} />;
-    }
-    case 'ellipse': {
-      const box = normalizeRect(element.x, element.y, element.width, element.height);
-      return (
-        <ellipse
-          key={`${element.id}-preview`}
-          className="board-element--preview-shape"
-          cx={box.x + box.width / 2}
-          cy={box.y + box.height / 2}
-          rx={box.width / 2}
-          ry={box.height / 2}
-        />
-      );
-    }
-    case 'line':
-      return (
-        <line
-          key={`${element.id}-preview`}
-          className="board-element--preview-line"
-          x1={element.x1}
-          y1={element.y1}
-          x2={element.x2}
-          y2={element.y2}
-        />
-      );
-    case 'arrow': {
-      const shaftEnd = getArrowShaftEnd(element);
-      return (
-        <g key={`${element.id}-preview`}>
-          <line
-            className="board-element--preview-line board-element--preview-arrow-shaft"
-            x1={element.x1}
-            y1={element.y1}
-            x2={shaftEnd?.x ?? element.x2}
-            y2={shaftEnd?.y ?? element.y2}
-          />
-          {renderArrowHead(element, 'board-element--preview-arrowhead')}
-        </g>
-      );
-    }
-    case 'text': {
-      const box = normalizeRect(element.x, element.y, element.width, element.height);
-      return <rect key={`${element.id}-preview`} className="board-element--preview-bounds" {...box} />;
-    }
-    case 'image': {
-      const box = normalizeRect(element.x, element.y, element.width, element.height);
-      return <rect key={`${element.id}-preview`} className="board-element--preview-bounds" {...box} />;
-    }
-    default:
-      return null;
-  }
-}
-
-function renderSingleSelectionOverlay(element: BoardElement) {
-  return (
-    <g key={`${element.id}-selected`} transform={getElementSvgTransform(element)}>
-      {renderSingleSelectionOverlayContent(element)}
-    </g>
-  );
-}
-
-function renderSingleSelectionOverlayContent(element: BoardElement) {
-  switch (element.type) {
-    case 'draw':
-      return (
-        <polyline
-          key={`${element.id}-selected`}
-          className="board-element--selected-stroke"
-          points={element.points.map((point) => [point.x, point.y].join(',')).join(' ')}
-        />
-      );
-    case 'rectangle': {
-      const box = normalizeRect(element.x, element.y, element.width, element.height);
-      return (
-        <rect
-          key={`${element.id}-selected`}
-          className="board-element--selected-shape"
-          {...box}
-        />
-      );
-    }
-    case 'ellipse': {
-      const box = normalizeRect(element.x, element.y, element.width, element.height);
-      return (
-        <ellipse
-          key={`${element.id}-selected`}
-          className="board-element--selected-shape"
-          cx={box.x + box.width / 2}
-          cy={box.y + box.height / 2}
-          rx={box.width / 2}
-          ry={box.height / 2}
-        />
-      );
-    }
-    case 'line':
-      return (
-        <line
-          key={`${element.id}-selected`}
-          className="board-element--selected-line"
-          x1={element.x1}
-          y1={element.y1}
-          x2={element.x2}
-          y2={element.y2}
-        />
-      );
-    case 'arrow': {
-      const shaftEnd = getArrowShaftEnd(element);
-      return (
-        <g key={`${element.id}-selected`}>
-          <line
-            className="board-element--selected-line board-element--selected-arrow-shaft"
-            x1={element.x1}
-            y1={element.y1}
-            x2={shaftEnd?.x ?? element.x2}
-            y2={shaftEnd?.y ?? element.y2}
-          />
-          {renderArrowHead(element, 'board-element--selected-arrowhead')}
-        </g>
-      );
-    }
-    default:
-      return null;
-  }
-}
-
-
 function renderArrowHead(element: LinearElement, className: string, color?: string) {
   const geometry = getArrowHeadGeometry(element);
 
