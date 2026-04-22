@@ -1,9 +1,10 @@
 import { useRef } from 'react';
 import type { CSSProperties, ChangeEvent } from 'react';
-import type { ColorStyle, LayerAction, TextStyle, ToolType } from '../whiteboard/types';
+import type { ColorStyle, LayerAction, StrokeStyle, TextStyle, ToolType } from '../whiteboard/types';
 import {
   BOARD_COLOR_OPTIONS,
   DEFAULT_BOARD_COLOR,
+  DEFAULT_STROKE_STYLE,
   DEFAULT_STROKE_WIDTH,
   DEFAULT_TEXT_STYLE,
   MAX_STROKE_WIDTH,
@@ -26,7 +27,9 @@ type LeftPropertiesPanelProps = {
   onTextStyleChange: (patch: Partial<TextStyle>) => void;
   onColorChange: (patch: Partial<ColorStyle>, options?: StyleChangeOptions) => void;
   strokeWidth: number | null;
+  strokeStyle: StrokeStyle | null;
   onStrokeWidthChange: (value: number, options?: StyleChangeOptions) => void;
+  onStrokeStyleChange: (value: StrokeStyle, options?: StyleChangeOptions) => void;
   canTransformSelection: boolean;
   onRotateSelection: (degrees: number) => void;
   onFlipSelection: (axis: 'horizontal' | 'vertical') => void;
@@ -54,6 +57,11 @@ const EXTENDED_COLOR_OPTIONS = Array.from(
 
 const STYLE_TOOL_TYPES = new Set<ToolType>(['draw', 'rectangle', 'ellipse', 'line', 'arrow', 'text']);
 const CREATION_TOOL_TYPES = new Set<ToolType>(['draw', 'rectangle', 'ellipse', 'line', 'arrow', 'text', 'image']);
+const STROKE_STYLE_OPTIONS: Array<{ value: StrokeStyle; label: string }> = [
+  { value: 'solid', label: '\u5b9e\u7ebf' },
+  { value: 'dashed', label: '\u865a\u7ebf' },
+  { value: 'dotted', label: '\u70b9\u7ebf' },
+];
 
 function LeftPropertiesPanel({
   activeTool,
@@ -64,7 +72,9 @@ function LeftPropertiesPanel({
   onTextStyleChange,
   onColorChange,
   strokeWidth,
+  strokeStyle,
   onStrokeWidthChange,
+  onStrokeStyleChange,
   canTransformSelection,
   onRotateSelection,
   onFlipSelection,
@@ -87,6 +97,8 @@ function LeftPropertiesPanel({
   const activeColor = colorStyle?.color ?? DEFAULT_BOARD_COLOR;
   const opacityPercent = Math.round(clampOpacity(colorStyle?.opacity) * 100);
   const strokeWidthValue = strokeWidth === null ? DEFAULT_STROKE_WIDTH : clampStrokeWidth(strokeWidth);
+  const strokeStyleValue = strokeStyle ?? DEFAULT_STROKE_STYLE;
+  const showStrokeStyleControl = strokeStyle !== null;
   const showStrokeWidthControl = strokeWidth !== null;
   const styleTarget = hasSelection ? 'selection' : 'tool';
   const transformActions: PanelAction[] = [
@@ -268,6 +280,23 @@ function LeftPropertiesPanel({
                     aria-label="\u7ebf\u5bbd"
                   />
                 </label>
+              ) : null}
+              {showStrokeStyleControl ? (
+                <div className="board-properties-panel__field">
+                  <span className="board-properties-panel__field-label">{`\u7ebf\u6761\u6837\u5f0f`}</span>
+                  <div className="board-properties-panel__segmented" role="group" aria-label="\u7ebf\u6761\u6837\u5f0f">
+                    {STROKE_STYLE_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`board-properties-panel__segment ${strokeStyleValue === option.value ? 'board-properties-panel__segment--active' : ''}`}
+                        onClick={() => onStrokeStyleChange(option.value, { target: styleTarget, commit: true })}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ) : null}
             </section>
           ) : null}

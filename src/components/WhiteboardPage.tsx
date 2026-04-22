@@ -17,12 +17,14 @@ import type {
   Slide,
   SlideFrame,
   TextEditorState,
+  StrokeStyle,
   TextStyle,
   ToolType,
   ViewportState,
 } from '../whiteboard/types';
 import {
   DEFAULT_BOARD_COLOR,
+  DEFAULT_STROKE_STYLE,
   DEFAULT_STROKE_WIDTH,
   DEFAULT_TEXT_STYLE,
   MAX_STROKE_WIDTH,
@@ -165,7 +167,7 @@ function WhiteboardPage({
   const [viewport, setViewport] = useState<ViewportState>({ x: 180, y: 120, zoom: 1 });
   const [textEditor, setTextEditor] = useState<TextEditorState | null>(null);
   const [textDefaults, setTextDefaults] = useState<TextStyle>(DEFAULT_TEXT_STYLE);
-  const [shapeDefaults, setShapeDefaults] = useState<ColorStyle>({ color: DEFAULT_BOARD_COLOR, opacity: 1, strokeWidth: DEFAULT_STROKE_WIDTH });
+  const [shapeDefaults, setShapeDefaults] = useState<ColorStyle>({ color: DEFAULT_BOARD_COLOR, opacity: 1, strokeWidth: DEFAULT_STROKE_WIDTH, strokeStyle: DEFAULT_STROKE_STYLE });
   const [clipboard, setClipboard] = useState<BoardElement[]>([]);
   const [pasteCount, setPasteCount] = useState(0);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
@@ -1062,8 +1064,12 @@ function WhiteboardPage({
     const scale = Math.min(1, maxWidth / dimensions.width, maxHeight / dimensions.height);
     const width = Math.max(80, Math.round(dimensions.width * scale));
     const height = Math.max(80, Math.round(dimensions.height * scale));
-    const x = (180 - viewport.x) / viewport.zoom;
-    const y = (140 - viewport.y) / viewport.zoom;
+    const activeScopeId = activeScopeRef.current;
+    const activeSlideForInsert = activeScopeId ? slides.find((slide) => slide.id === activeScopeId) ?? null : null;
+    const insertPosition = activeSlideForInsert
+      ? getCenteredElementPositionInFrame(activeSlideForInsert.frame, width, height)
+      : getViewportInsertPosition(viewport, width, height);
+    const { x, y } = insertPosition;
 
     const nextElement: ImageElement = {
       id: generateElementId(),
@@ -1133,6 +1139,18 @@ function WhiteboardPage({
 
     return null;
   }, [activeTool, selectedStrokeElements, shapeDefaults.strokeWidth]);
+
+  const toolbarStrokeStyle = useMemo(() => {
+    if (activeTool === 'select') {
+      return selectedStrokeElements.length > 0 ? normalizeStrokeStyle(selectedStrokeElements[0].strokeStyle) : null;
+    }
+
+    if (isStrokeWidthTool(activeTool)) {
+      return normalizeStrokeStyle(shapeDefaults.strokeStyle);
+    }
+
+    return null;
+  }, [activeTool, selectedStrokeElements, shapeDefaults.strokeStyle]);
 
   const toolbarTextStyle = useMemo(() => {
     if (activeTool === 'text') {
@@ -1857,6 +1875,37 @@ function WhiteboardPage({
 
     onElementsChange(nextElements);
   };
+  const handleStrokeStyleChange = (
+    value: StrokeStyle,
+    options: { commit?: boolean; target?: 'selection' | 'tool' } = {}
+  ) => {
+    const normalizedStrokeStyle = normalizeStrokeStyle(value);
+    const target = options.target ?? (selectedStrokeElements.length > 0 && activeTool === 'select' ? 'selection' : 'tool');
+
+    if (target === 'tool') {
+      if (isStrokeWidthTool(activeTool)) {
+        setShapeDefaults((current) => ({ ...current, strokeStyle: normalizedStrokeStyle }));
+      }
+
+      return;
+    }
+
+    if (selectedStrokeElements.length === 0) {
+      return;
+    }
+
+    const selectedElementSet = new Set(selectedStrokeElements.map((element) => element.id));
+    const nextElements = elements.map((element) =>
+      selectedElementSet.has(element.id) && isStrokeWidthEditableElement(element)
+        ? {
+            ...element,
+            strokeStyle: normalizedStrokeStyle,
+          }
+        : element
+    );
+
+    onCommitElementsChange(elements, nextElements);
+  };
   const recordingElapsedLabel = formatRecordingElapsed(recordingElapsedMs);
 
   return (
@@ -1877,9 +1926,11 @@ function WhiteboardPage({
         textStyle={toolbarTextStyle}
         colorStyle={toolbarColorStyle}
         strokeWidth={toolbarStrokeWidth}
+        strokeStyle={toolbarStrokeStyle}
         onTextStyleChange={handleToolbarTextStyleChange}
         onColorChange={handleToolbarColorChange}
         onStrokeWidthChange={handleStrokeWidthChange}
+        onStrokeStyleChange={handleStrokeStyleChange}
         canArrangeLayers={activeTool === 'select' && selectedIds.length > 0}
         onLayerAction={handleLayerAction}
         canTransformSelection={activeTool === 'select' && selectedIds.length > 0}
@@ -2455,13 +2506,13 @@ function renderSlideThumbnailElementContent(element: BoardElement) {
         <polyline
           key={element.id}
           className="slide-thumbnail-element slide-thumbnail-element--stroke"
-          style={{ stroke: getElementColor(element), strokeWidth: getCanvasElementStrokeWidth(element) }}
+          style={getThumbnailStrokeElementStyle(element)}
           points={element.points.map((point) => [point.x, point.y].join(',')).join(' ')}
         />
       );
     case 'rectangle': {
       const box = normalizeThumbnailRect(element.x, element.y, element.width, element.height);
-      return <rect key={element.id} className="slide-thumbnail-element slide-thumbnail-element--shape" style={{ stroke: getElementColor(element), strokeWidth: getCanvasElementStrokeWidth(element) }} {...box} />;
+      return <rect key={element.id} className="slide-thumbnail-element slide-thumbnail-element--shape" style={getThumbnailStrokeElementStyle(element)} {...box} />;
     }
     case 'ellipse': {
       const box = normalizeThumbnailRect(element.x, element.y, element.width, element.height);
@@ -2469,7 +2520,7 @@ function renderSlideThumbnailElementContent(element: BoardElement) {
         <ellipse
           key={element.id}
           className="slide-thumbnail-element slide-thumbnail-element--shape"
-          style={{ stroke: getElementColor(element), strokeWidth: getCanvasElementStrokeWidth(element) }}
+          style={getThumbnailStrokeElementStyle(element)}
           cx={box.x + box.width / 2}
           cy={box.y + box.height / 2}
           rx={box.width / 2}
@@ -2482,7 +2533,7 @@ function renderSlideThumbnailElementContent(element: BoardElement) {
         <line
           key={element.id}
           className="slide-thumbnail-element slide-thumbnail-element--line"
-          style={{ stroke: getElementColor(element), strokeWidth: getCanvasElementStrokeWidth(element) }}
+          style={getThumbnailStrokeElementStyle(element)}
           x1={element.x1}
           y1={element.y1}
           x2={element.x2}
@@ -2495,7 +2546,7 @@ function renderSlideThumbnailElementContent(element: BoardElement) {
         <g key={element.id}>
           <line
             className="slide-thumbnail-element slide-thumbnail-element--line slide-thumbnail-element--arrow-shaft"
-            style={{ stroke: getElementColor(element), strokeWidth: getCanvasElementStrokeWidth(element) }}
+            style={getThumbnailStrokeElementStyle(element)}
             x1={element.x1}
             y1={element.y1}
             x2={geometry?.shaftEnd.x ?? element.x2}
@@ -2568,6 +2619,30 @@ function getThumbnailArrowGeometry(element: LinearElement) {
 function getElementColor(element: BoardElement) {
   return 'color' in element ? element.color : '#1f2937';
 }
+function getThumbnailStrokeElementStyle(element: BoardElement) {
+  const strokeWidth = getCanvasElementStrokeWidth(element);
+  const strokeStyle = normalizeStrokeStyle(element.strokeStyle);
+  const dashArray = getStrokeDashArray(strokeStyle, strokeWidth);
+
+  return {
+    stroke: getElementColor(element),
+    strokeWidth,
+    ...(dashArray ? { strokeDasharray: dashArray } : {}),
+    ...(strokeStyle === 'dotted' ? { strokeLinecap: 'round' as const } : {}),
+  };
+}
+
+function getStrokeDashArray(style: StrokeStyle, strokeWidth: number) {
+  if (style === 'dashed') {
+    return `${strokeWidth * 4} ${strokeWidth * 3}`;
+  }
+
+  if (style === 'dotted') {
+    return `0 ${strokeWidth * 2.5}`;
+  }
+
+  return undefined;
+}
 const RECORDING_FPS = 30;
 const RECORDING_VIDEO_BITS_PER_SECOND = 20_000_000;
 const SLIDE_TRANSITION_BASE_MS = 260;
@@ -2603,6 +2678,19 @@ function reflowSlideFrames(slides: Slide[], aspectRatio: number) {
   });
 }
 
+function getCenteredElementPositionInFrame(frame: SlideFrame, width: number, height: number) {
+  return {
+    x: frame.x + (frame.width - width) / 2,
+    y: frame.y + (frame.height - height) / 2,
+  };
+}
+
+function getViewportInsertPosition(viewport: ViewportState, width: number, height: number) {
+  return {
+    x: (180 - viewport.x) / viewport.zoom - width / 2,
+    y: (140 - viewport.y) / viewport.zoom - height / 2,
+  };
+}
 function materializeActiveSlideElements(slides: Slide[], activeSlideId: string | null, activeElements: BoardElement[]) {
   if (!activeSlideId) {
     return slides;
@@ -3020,6 +3108,7 @@ function drawCanvasElement(context: CanvasRenderingContext2D, element: BoardElem
   context.lineCap = 'round';
   context.globalAlpha *= clampOpacity(element.opacity);
   applyCanvasElementTransform(context, element);
+  applyCanvasStrokeStyle(context, element);
 
   switch (element.type) {
     case 'draw':
@@ -3070,7 +3159,23 @@ function drawCanvasElement(context: CanvasRenderingContext2D, element: BoardElem
 function getCanvasElementStrokeWidth(element: BoardElement) {
   return clampStrokeWidth(element.strokeWidth);
 }
+function applyCanvasStrokeStyle(context: CanvasRenderingContext2D, element: BoardElement) {
+  const strokeWidth = getCanvasElementStrokeWidth(element);
+  const strokeStyle = normalizeStrokeStyle(element.strokeStyle);
 
+  if (strokeStyle === 'dashed') {
+    context.setLineDash([strokeWidth * 4, strokeWidth * 3]);
+    return;
+  }
+
+  if (strokeStyle === 'dotted') {
+    context.setLineDash([0, strokeWidth * 2.5]);
+    context.lineCap = 'round';
+    return;
+  }
+
+  context.setLineDash([]);
+}
 function applyCanvasElementTransform(context: CanvasRenderingContext2D, element: BoardElement) {
   const rotation = normalizeRotation(element.rotation ?? 0);
   const scaleX = element.flipX ? -1 : 1;
@@ -3104,6 +3209,7 @@ function drawCanvasArrow(context: CanvasRenderingContext2D, element: LinearEleme
     return;
   }
 
+  context.setLineDash([]);
   context.beginPath();
   context.fillStyle = element.color;
   context.strokeStyle = element.color;
@@ -3258,7 +3364,9 @@ function clampStrokeWidth(value: number | undefined) {
     ? Math.min(MAX_STROKE_WIDTH, Math.max(MIN_STROKE_WIDTH, Math.round(value)))
     : DEFAULT_STROKE_WIDTH;
 }
-
+function normalizeStrokeStyle(value: unknown): StrokeStyle {
+  return value === 'dashed' || value === 'dotted' || value === 'solid' ? value : DEFAULT_STROKE_STYLE;
+}
 function fitViewportToElements(elements: BoardElement[], viewportWidth: number, viewportHeight: number): ViewportState {
   const contentBounds = getElementsBounds(elements);
 

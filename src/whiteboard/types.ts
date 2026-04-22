@@ -23,10 +23,13 @@ export type ViewportState = {
 
 export type DragHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'start' | 'end';
 
+export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
+
 export type ColorStyle = {
   color?: string;
   opacity?: number;
   strokeWidth?: number;
+  strokeStyle?: StrokeStyle;
 };
 
 export type LayerAction = 'bring-forward' | 'send-backward' | 'bring-to-front' | 'send-to-back';
@@ -37,6 +40,7 @@ export type ElementTransform = {
   flipY?: boolean;
   opacity?: number;
   strokeWidth?: number;
+  strokeStyle?: StrokeStyle;
 };
 
 export type TextStyle = {
@@ -56,6 +60,7 @@ export const DEFAULT_BOARD_COLOR = '#1f2937';
 export const DEFAULT_STROKE_WIDTH = 2;
 export const MIN_STROKE_WIDTH = 1;
 export const MAX_STROKE_WIDTH = 12;
+export const DEFAULT_STROKE_STYLE: StrokeStyle = 'solid';
 
 export const BOARD_COLOR_OPTIONS = [
   '#111827',

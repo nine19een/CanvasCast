@@ -18,6 +18,7 @@ import type {
   ViewportState,
 } from '../whiteboard/types';
 import {
+  DEFAULT_STROKE_STYLE,
   DEFAULT_STROKE_WIDTH,
   MAX_STROKE_WIDTH,
   MIN_STROKE_WIDTH,
@@ -702,7 +703,8 @@ function WhiteboardStage({
         points: [point],
         color: shapeDefaults.color ?? '#1f2937',
         opacity: clampOpacity(shapeDefaults.opacity),
-              strokeWidth: clampStrokeWidth(shapeDefaults.strokeWidth),
+        strokeWidth: clampStrokeWidth(shapeDefaults.strokeWidth),
+        strokeStyle: normalizeStrokeStyle(shapeDefaults.strokeStyle),
       };
       onElementsChange([...scopeElements, nextStroke]);
       onSelectedIdsChange([]);
@@ -729,6 +731,7 @@ function WhiteboardStage({
               color: shapeDefaults.color ?? '#1f2937',
               opacity: clampOpacity(shapeDefaults.opacity),
               strokeWidth: clampStrokeWidth(shapeDefaults.strokeWidth),
+              strokeStyle: normalizeStrokeStyle(shapeDefaults.strokeStyle),
             }
           : {
               id: nextId,
@@ -740,6 +743,7 @@ function WhiteboardStage({
               color: shapeDefaults.color ?? '#1f2937',
               opacity: clampOpacity(shapeDefaults.opacity),
               strokeWidth: clampStrokeWidth(shapeDefaults.strokeWidth),
+              strokeStyle: normalizeStrokeStyle(shapeDefaults.strokeStyle),
             };
 
       onElementsChange([...scopeElements, nextElement]);
@@ -1545,6 +1549,10 @@ function clampStrokeWidth(value: number | undefined) {
     : DEFAULT_STROKE_WIDTH;
 }
 
+function normalizeStrokeStyle(value: unknown) {
+  return value === 'dashed' || value === 'dotted' || value === 'solid' ? value : DEFAULT_STROKE_STYLE;
+}
+
 function distributeElementsByOwner(
   slides: Slide[],
   freeboardElements: BoardElement[],
@@ -1870,13 +1878,13 @@ function renderElementContent(element: BoardElement) {
         <polyline
           key={element.id}
           className="board-element board-element--stroke"
-          style={{ stroke: getElementColor(element), strokeWidth: getElementStrokeWidth(element) }}
+          style={getStrokeElementSvgStyle(element)}
           points={element.points.map((point) => [point.x, point.y].join(',')).join(' ')}
         />
       );
     case 'rectangle': {
       const box = normalizeRect(element.x, element.y, element.width, element.height);
-      return <rect key={element.id} className="board-element board-element--shape" style={{ stroke: getElementColor(element), strokeWidth: getElementStrokeWidth(element) }} {...box} />;
+      return <rect key={element.id} className="board-element board-element--shape" style={getStrokeElementSvgStyle(element)} {...box} />;
     }
     case 'ellipse': {
       const box = normalizeRect(element.x, element.y, element.width, element.height);
@@ -1884,7 +1892,7 @@ function renderElementContent(element: BoardElement) {
         <ellipse
           key={element.id}
           className="board-element board-element--shape"
-          style={{ stroke: getElementColor(element), strokeWidth: getElementStrokeWidth(element) }}
+          style={getStrokeElementSvgStyle(element)}
           cx={box.x + box.width / 2}
           cy={box.y + box.height / 2}
           rx={box.width / 2}
@@ -1897,7 +1905,7 @@ function renderElementContent(element: BoardElement) {
         <line
           key={element.id}
           className="board-element board-element--line"
-          style={{ stroke: getElementColor(element), strokeWidth: getElementStrokeWidth(element) }}
+          style={getStrokeElementSvgStyle(element)}
           x1={element.x1}
           y1={element.y1}
           x2={element.x2}
@@ -1910,7 +1918,7 @@ function renderElementContent(element: BoardElement) {
         <g key={element.id}>
           <line
             className="board-element board-element--line board-element--arrow-shaft"
-            style={{ stroke: getElementColor(element), strokeWidth: getElementStrokeWidth(element) }}
+            style={getStrokeElementSvgStyle(element)}
             x1={element.x1}
             y1={element.y1}
             x2={shaftEnd?.x ?? element.x2}
@@ -1964,6 +1972,31 @@ function getElementOpacity(element: BoardElement) {
 
 function getElementStrokeWidth(element: BoardElement) {
   return clampStrokeWidth(element.strokeWidth);
+}
+
+function getStrokeElementSvgStyle(element: BoardElement) {
+  const strokeWidth = getElementStrokeWidth(element);
+  const strokeStyle = normalizeStrokeStyle(element.strokeStyle);
+  const dashArray = getStrokeDashArray(strokeStyle, strokeWidth);
+
+  return {
+    stroke: getElementColor(element),
+    strokeWidth,
+    ...(dashArray ? { strokeDasharray: dashArray } : {}),
+    ...(strokeStyle === 'dotted' ? { strokeLinecap: 'round' as const } : {}),
+  };
+}
+
+function getStrokeDashArray(style: string, strokeWidth: number) {
+  if (style === 'dashed') {
+    return `${strokeWidth * 4} ${strokeWidth * 3}`;
+  }
+
+  if (style === 'dotted') {
+    return `0 ${strokeWidth * 2.5}`;
+  }
+
+  return undefined;
 }
 
 function renderPreviewOverlay(element: BoardElement) {
