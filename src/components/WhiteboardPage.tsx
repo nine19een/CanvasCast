@@ -1,4 +1,4 @@
-import type React from 'react';
+﻿import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FloatingControlBar from './FloatingControlBar';
 import LeftPropertiesPanel from './LeftPropertiesPanel';
@@ -47,6 +47,7 @@ import {
   getSelectionBounds,
   moveElementCenterTo,
   normalizeRotation,
+  normalizeRect,
   offsetElement,
   rotatePointAround,
 } from '../whiteboard/utils';
@@ -141,6 +142,11 @@ type RecordingTarget = {
   slideId: string | null;
 };
 
+type ImageCropState = {
+  elementId: string;
+  rect: { x: number; y: number; width: number; height: number };
+};
+
 function WhiteboardPage({
   onOpenSettings,
   slideAspectRatio,
@@ -183,6 +189,7 @@ function WhiteboardPage({
   const [isTeleprompterOpen, setIsTeleprompterOpen] = useState(false);
   const [teleprompterState, setTeleprompterState] = useState<TeleprompterPanelState>(() => loadTeleprompterState());
   const [slideTransition, setSlideTransition] = useState<RecordingTransition | null>(null);
+  const [imageCrop, setImageCrop] = useState<ImageCropState | null>(null);
   const [slideTransitionTick, setSlideTransitionTick] = useState(0);
   const recordingRuntimeRef = useRef<RecordingRuntime | null>(null);
   const recordingRenderStateRef = useRef<RecordingRenderState | null>(null);
@@ -1061,6 +1068,36 @@ function WhiteboardPage({
     [activeTool, elements, onCommitElementsChange, selectedIds]
   );
 
+  const handleDuplicateSelection = useCallback(() => {
+    if (activeTool !== 'select' || selectedIds.length === 0) {
+      return;
+    }
+
+    const duplicatedElements = duplicateElements(
+      elements.filter((element) => selectedIds.includes(element.id)),
+      generateElementId
+    ).map((element) => offsetElement(element, 24, 24));
+
+    if (duplicatedElements.length === 0) {
+      return;
+    }
+
+    onCommitElementsChange(elements, [...elements, ...duplicatedElements]);
+    setSelectedIds(duplicatedElements.map((element) => element.id));
+    setPasteCount((current) => current + 1);
+  }, [activeTool, elements, onCommitElementsChange, selectedIds]);
+
+  const handleDeleteSelection = useCallback(() => {
+    if (activeTool !== 'select' || selectedIds.length === 0) {
+      return;
+    }
+
+    const nextElements = elements.filter((element) => !selectedIds.includes(element.id));
+    onCommitElementsChange(elements, nextElements);
+    setSelectedIds([]);
+    setTextEditor((current) => (current && selectedIds.includes(current.elementId) ? null : current));
+  }, [activeTool, elements, onCommitElementsChange, selectedIds]);
+
   const handleInsertImage = async (file: File) => {
     const src = await readFileAsDataUrl(file);
     const dimensions = await readImageDimensions(src);
@@ -1083,6 +1120,8 @@ function WhiteboardPage({
       y,
       width,
       height,
+      originalWidth: width,
+      originalHeight: height,
       src,
       fileName: file.name,
       opacity: clampOpacity(shapeDefaults.opacity),
@@ -1107,6 +1146,90 @@ function WhiteboardPage({
     const element = allBoardElements.find((item) => item.id === selectedIds[0]);
     return element?.type === 'text' ? element : null;
   }, [allBoardElements, selectedIds]);
+
+  const selectedImageElement = useMemo(() => {
+    if (selectedIds.length !== 1) {
+      return null;
+    }
+
+    const element = allBoardElements.find((item) => item.id === selectedIds[0]);
+    return element?.type === 'image' ? element : null;
+  }, [allBoardElements, selectedIds]);
+
+  const canCropSelectedImage = Boolean(selectedImageElement && isImageCropEligible(selectedImageElement));
+
+  useEffect(() => {
+    if (imageCrop && !selectedIds.includes(imageCrop.elementId)) {
+      setImageCrop(null);
+    }
+  }, [imageCrop, selectedIds]);
+
+  const handleStartImageCrop = useCallback(() => {
+    if (!selectedImageElement || !isImageCropEligible(selectedImageElement)) {
+      return;
+    }
+
+    const box = normalizeRect(selectedImageElement.x, selectedImageElement.y, selectedImageElement.width, selectedImageElement.height);
+    setImageCrop({
+      elementId: selectedImageElement.id,
+      rect: box,
+    });
+  }, [selectedImageElement]);
+
+  const handleConfirmImageCrop = useCallback(async () => {
+    if (!imageCrop) {
+      return;
+    }
+
+    const imageElement = elements.find((element): element is ImageElement => element.id === imageCrop.elementId && element.type === 'image');
+    if (!imageElement) {
+      setImageCrop(null);
+      return;
+    }
+
+    const image = await loadImageForCrop(imageElement.src);
+    const imageBox = normalizeRect(imageElement.x, imageElement.y, imageElement.width, imageElement.height);
+    const cropRect = clampCropRectToImage(imageCrop.rect, imageBox);
+    if (cropRect.width < 1 || cropRect.height < 1) {
+      setImageCrop(null);
+      return;
+    }
+
+    const sourceX = ((cropRect.x - imageBox.x) / imageBox.width) * image.naturalWidth;
+    const sourceY = ((cropRect.y - imageBox.y) / imageBox.height) * image.naturalHeight;
+    const sourceWidth = (cropRect.width / imageBox.width) * image.naturalWidth;
+    const sourceHeight = (cropRect.height / imageBox.height) * image.naturalHeight;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(sourceWidth));
+    canvas.height = Math.max(1, Math.round(sourceHeight));
+    const context = canvas.getContext('2d');
+    if (!context) {
+      setImageCrop(null);
+      return;
+    }
+
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+    const nextSrc = canvas.toDataURL('image/png');
+    const nextElements = elements.map((element) =>
+      element.id === imageElement.id && element.type === 'image'
+        ? {
+            ...element,
+            src: nextSrc,
+            width: cropRect.width,
+            height: cropRect.height,
+            originalWidth: cropRect.width,
+            originalHeight: cropRect.height,
+          }
+        : element
+    );
+
+    onCommitElementsChange(elements, nextElements);
+    setImageCrop(null);
+  }, [elements, imageCrop, onCommitElementsChange]);
+
+  const handleCancelImageCrop = useCallback(() => {
+    setImageCrop(null);
+  }, []);
 
   const selectedColorElements = useMemo(
     () =>
@@ -2056,6 +2179,12 @@ function WhiteboardPage({
         onCornerRadiusChange={handleCornerRadiusChange}
         canArrangeLayers={activeTool === 'select' && selectedIds.length > 0}
         onLayerAction={handleLayerAction}
+        canEditSelection={activeTool === 'select' && selectedIds.length > 0}
+        onDuplicateSelection={handleDuplicateSelection}
+        onDeleteSelection={handleDeleteSelection}
+                showCropImageAction={Boolean(selectedImageElement)}
+        canCropImage={canCropSelectedImage}
+        onCropImage={handleStartImageCrop}
         canTransformSelection={activeTool === 'select' && selectedIds.length > 0}
         onRotateSelection={handleRotateSelection}
         onFlipSelection={handleFlipSelection}
@@ -2098,6 +2227,10 @@ function WhiteboardPage({
           recordingOverlayStatus={recordingStatus}
           recordingSlideTransition={slideTransition}
           recordingSlideTransitionNow={slideTransitionTick}
+          imageCrop={imageCrop}
+          onImageCropChange={setImageCrop}
+          onConfirmImageCrop={handleConfirmImageCrop}
+          onCancelImageCrop={handleCancelImageCrop}
           cameraSettings={cameraSettings}
           cameraStream={cameraStream}
           onCameraSettingsChange={onCameraSettingsChange}
@@ -2145,6 +2278,8 @@ function WhiteboardPage({
         />
       ) : null}
 
+      <RecordingStatusBadge frame={recordingFrame} status={recordingStatus} viewport={viewport} />
+
       <ZoomControls
         zoom={viewport.zoom}
         canClear={elements.length > 0}
@@ -2161,6 +2296,33 @@ function WhiteboardPage({
   );
 }
 
+function RecordingStatusBadge({
+  frame,
+  status,
+  viewport,
+}: {
+  frame: SlideFrame | null;
+  status: RecordingStatus;
+  viewport: ViewportState;
+}) {
+  if (!frame || (status !== 'recording' && status !== 'paused')) {
+    return null;
+  }
+
+  const left = frame.x * viewport.zoom + viewport.x + 12;
+  const top = frame.y * viewport.zoom + viewport.y - 14;
+  const isRecording = status === 'recording';
+
+  return (
+    <div
+      className={`board-recording-status-badge board-recording-status-badge--${status}`}
+      style={{ left, top }}
+      aria-hidden="true"
+    >
+      {isRecording ? '\u25cf REC' : '\u6682\u505c'}
+    </div>
+  );
+}
 function RecordingSlideSwitchButtons({
   frame,
   viewport,
@@ -3820,7 +3982,35 @@ function pruneHistoryScope(history: ElementsHistory, deletedScopeId: string): El
   };
 }
 
-async function readFileAsDataUrl(file: File) {
+function isImageCropEligible(element: ImageElement) {
+  const rotation = normalizeRotation(element.rotation ?? 0);
+  return (
+    rotation === 0 &&
+    element.flipX !== true &&
+    element.flipY !== true
+  );
+}
+
+function clampCropRectToImage(
+  rect: { x: number; y: number; width: number; height: number },
+  imageBounds: { x: number; y: number; width: number; height: number }
+) {
+  const x = Math.max(imageBounds.x, Math.min(imageBounds.x + imageBounds.width, rect.x));
+  const y = Math.max(imageBounds.y, Math.min(imageBounds.y + imageBounds.height, rect.y));
+  const right = Math.max(x, Math.min(imageBounds.x + imageBounds.width, rect.x + rect.width));
+  const bottom = Math.max(y, Math.min(imageBounds.y + imageBounds.height, rect.y + rect.height));
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+function loadImageForCrop(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
+  });
+}
+function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
@@ -3891,3 +4081,15 @@ function isCornerRadiusEditableElement(element: BoardElement): element is Extrac
 }
 
 export default WhiteboardPage;
+
+
+
+
+
+
+
+
+
+
+
+

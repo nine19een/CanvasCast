@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+﻿import { useRef } from 'react';
 import type { CSSProperties, ChangeEvent } from 'react';
 import type { ColorStyle, LayerAction, StrokeStyle, TextStyle, ToolType } from '../whiteboard/types';
 import {
@@ -43,6 +43,12 @@ type LeftPropertiesPanelProps = {
   onFlipSelection: (axis: 'horizontal' | 'vertical') => void;
   canArrangeLayers: boolean;
   onLayerAction: (action: LayerAction) => void;
+  canEditSelection: boolean;
+  onDuplicateSelection: () => void;
+  onDeleteSelection: () => void;
+  showCropImageAction: boolean;
+  canCropImage: boolean;
+  onCropImage: () => void;
 };
 
 type PanelIconName =
@@ -53,7 +59,10 @@ type PanelIconName =
   | 'bring-forward'
   | 'send-backward'
   | 'bring-to-front'
-  | 'send-to-back';
+  | 'send-to-back'
+  | 'duplicate'
+  | 'delete'
+  | 'crop';
 
 type PanelAction = {
   key: string;
@@ -103,6 +112,12 @@ function LeftPropertiesPanel({
   onFlipSelection,
   canArrangeLayers,
   onLayerAction,
+  canEditSelection,
+  onDuplicateSelection,
+  onDeleteSelection,
+  showCropImageAction,
+  canCropImage,
+  onCropImage,
 }: LeftPropertiesPanelProps) {
   const customColorInputRef = useRef<HTMLInputElement | null>(null);
   const customFillColorInputRef = useRef<HTMLInputElement | null>(null);
@@ -143,6 +158,11 @@ function LeftPropertiesPanel({
     { key: 'bring-to-front', label: '\u7f6e\u4e8e\u9876\u5c42', title: '\u7f6e\u4e8e\u9876\u5c42', icon: 'bring-to-front' },
     { key: 'send-to-back', label: '\u7f6e\u4e8e\u5e95\u5c42', title: '\u7f6e\u4e8e\u5e95\u5c42', icon: 'send-to-back' },
   ];
+  const operationActions: PanelAction[] = [
+    { key: 'duplicate', label: '\u590d\u5236', title: '\u590d\u5236\u9009\u4e2d\u5bf9\u8c61', icon: 'duplicate', onClick: onDuplicateSelection },
+    { key: 'delete', label: '\u5220\u9664', title: '\u5220\u9664\u9009\u4e2d\u5bf9\u8c61', icon: 'delete', onClick: onDeleteSelection },
+  ];
+  const cropImageAction: PanelAction = { key: 'crop', label: '\u88c1\u526a\u56fe\u7247', title: '\u88c1\u526a\u56fe\u7247', icon: 'crop', onClick: onCropImage };
   const handleCustomColorChange = (event: ChangeEvent<HTMLInputElement>) => {
     onColorChange({ color: event.target.value }, { target: styleTarget, commit: true });
   };
@@ -472,6 +492,37 @@ function LeftPropertiesPanel({
                   ))}
                 </div>
               </section>
+              <section className="board-properties-panel__section">
+                <h3 className="board-properties-panel__title">{`\u64cd\u4f5c`}</h3>
+                <div className="board-properties-panel__action-grid">
+                  {showCropImageAction ? (
+                    <button
+                      key={cropImageAction.key}
+                      type="button"
+                      className="board-properties-panel__action"
+                      onClick={cropImageAction.onClick}
+                      disabled={!canCropImage}
+                      title={cropImageAction.title}
+                    >
+                      {renderPanelIcon(cropImageAction.icon)}
+                      <span>{cropImageAction.label}</span>
+                    </button>
+                  ) : null}
+                  {operationActions.map((action) => (
+                    <button
+                      key={action.key}
+                      type="button"
+                      className="board-properties-panel__action"
+                      onClick={action.onClick}
+                      disabled={!canEditSelection}
+                      title={action.title}
+                    >
+                      {renderPanelIcon(action.icon)}
+                      <span>{action.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
             </>
           ) : null}
         </>
@@ -517,31 +568,61 @@ function renderPanelIcon(name: PanelIconName) {
     case 'bring-forward':
       return (
         <svg className="board-properties-panel__action-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="6" y="9" width="9" height="9" rx="1.5" />
-          <rect x="10" y="5" width="8" height="8" rx="1.5" />
+          <path d="M12 16V7" />
+          <path d="M8.5 10.5 12 7l3.5 3.5" />
+          <rect x="6" y="16" width="12" height="4" rx="1.2" />
         </svg>
       );
     case 'send-backward':
       return (
         <svg className="board-properties-panel__action-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="9" y="6" width="9" height="9" rx="1.5" />
-          <rect x="5" y="10" width="8" height="8" rx="1.5" />
+          <path d="M12 8v9" />
+          <path d="M8.5 13.5 12 17l3.5-3.5" />
+          <rect x="6" y="4" width="12" height="4" rx="1.2" />
         </svg>
       );
     case 'bring-to-front':
       return (
         <svg className="board-properties-panel__action-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 4v7" />
-          <path d="M8.5 7.5 12 4l3.5 3.5" />
-          <rect x="5" y="12" width="14" height="7" rx="1.5" />
+          <path d="M6 4h12" />
+          <path d="M12 16V7" />
+          <path d="M8.5 10.5 12 7l3.5 3.5" />
+          <rect x="6" y="16" width="12" height="4" rx="1.2" />
         </svg>
       );
     case 'send-to-back':
       return (
         <svg className="board-properties-panel__action-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 20v-7" />
-          <path d="M8.5 16.5 12 20l3.5-3.5" />
-          <rect x="5" y="5" width="14" height="7" rx="1.5" />
+          <path d="M6 20h12" />
+          <path d="M12 8v9" />
+          <path d="M8.5 13.5 12 17l3.5-3.5" />
+          <rect x="6" y="4" width="12" height="4" rx="1.2" />
+        </svg>
+      );
+    case 'crop':
+      return (
+        <svg className="board-properties-panel__action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 3v12c0 1.7 1.3 3 3 3h12" />
+          <path d="M3 6h12c1.7 0 3 1.3 3 3v12" />
+          <path d="M9 6v9h9" />
+        </svg>
+      );
+    case 'duplicate':
+      return (
+        <svg className="board-properties-panel__action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="8" y="8" width="10" height="10" rx="1.7" />
+          <rect x="5" y="5" width="10" height="10" rx="1.7" />
+        </svg>
+      );
+    case 'delete':
+      return (
+        <svg className="board-properties-panel__action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 7h14" />
+          <path d="M10 7V5h4v2" />
+          <path d="M8 10v8" />
+          <path d="M12 10v8" />
+          <path d="M16 10v8" />
+          <path d="M7 7l1 14h8l1-14" />
         </svg>
       );
     default:
@@ -595,3 +676,12 @@ function getToolDisplayName(tool: ToolType) {
 }
 
 export default LeftPropertiesPanel;
+
+
+
+
+
+
+
+
+

@@ -1,4 +1,4 @@
-export type ToolType =
+﻿export type ToolType =
   | 'hand'
   | 'select'
   | 'rectangle'
@@ -154,6 +154,8 @@ export type ImageElement = ElementTransform & {
   y: number;
   width: number;
   height: number;
+  originalWidth?: number;
+  originalHeight?: number;
   src: string;
   fileName: string;
 };
@@ -261,3 +263,4 @@ export type InteractionState =
       type: 'erasing';
       pointerId: number;
     };
+

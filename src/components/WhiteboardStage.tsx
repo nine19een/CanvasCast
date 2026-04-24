@@ -1,4 +1,4 @@
-import type React from 'react';
+﻿import type React from 'react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CameraSettings } from '../cameraTypes';
 import { getCameraPositionFromRect } from '../recordingLayout';
@@ -47,6 +47,20 @@ import {
   rectContainsBounds,
   rotatePointAround,
 } from '../whiteboard/utils';
+type ImageCropState = {
+  elementId: string;
+  rect: { x: number; y: number; width: number; height: number };
+};
+
+type CropHandle = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+type CropInteraction = {
+  pointerId: number;
+  handle: CropHandle;
+  initialRect: { x: number; y: number; width: number; height: number };
+  imageBounds: { x: number; y: number; width: number; height: number };
+};
+
 type WhiteboardStageProps = {
   activeTool: ToolType;
   elements: BoardElement[];
@@ -57,6 +71,10 @@ type WhiteboardStageProps = {
   recordingOverlayStatus: 'idle' | 'preparing' | 'recording' | 'paused';
   recordingSlideTransition: RecordingSlideTransition | null;
   recordingSlideTransitionNow: number;
+  imageCrop: ImageCropState | null;
+  onImageCropChange: (state: ImageCropState | null) => void;
+  onConfirmImageCrop: () => void;
+  onCancelImageCrop: () => void;
   cameraSettings: CameraSettings;
   cameraStream: MediaStream | null;
   onCameraSettingsChange: (patch: Partial<CameraSettings>) => void;
@@ -131,6 +149,10 @@ function WhiteboardStage({
   recordingOverlayStatus,
   recordingSlideTransition,
   recordingSlideTransitionNow,
+  imageCrop,
+  onImageCropChange,
+  onConfirmImageCrop,
+  onCancelImageCrop,
   cameraSettings,
   cameraStream,
   onCameraSettingsChange,
@@ -162,6 +184,7 @@ function WhiteboardStage({
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
   const [editorHeight, setEditorHeight] = useState<number | null>(null);
   const [hoverCursor, setHoverCursor] = useState<string | null>(null);
+  const [cropInteraction, setCropInteraction] = useState<CropInteraction | null>(null);
   const [isCameraDragging, setIsCameraDragging] = useState(false);
   const [provisionalOwners, setProvisionalOwners] = useState<Record<string, string | null>>({});
   const provisionalOwnersRef = useRef<Record<string, string | null>>({});
@@ -274,6 +297,19 @@ function WhiteboardStage({
     [elements, freeboardElements, provisionalOwners, slides]
   );
 
+  const cropImageElement = imageCrop
+    ? elements.find((element): element is Extract<BoardElement, { type: 'image' }> => element.id === imageCrop.elementId && element.type === 'image') ?? null
+    : null;
+  const cropImageBounds = cropImageElement
+    ? normalizeRect(cropImageElement.x, cropImageElement.y, cropImageElement.width, cropImageElement.height)
+    : null;
+  const cropControlsStyle = imageCrop && cropImageBounds
+    ? {
+        left: `${(cropImageBounds.x + cropImageBounds.width / 2) * viewport.zoom + viewport.x}px`,
+        top: `${(cropImageBounds.y + cropImageBounds.height) * viewport.zoom + viewport.y + 14}px`,
+      }
+    : null;
+
   const selectionOverlayBox = (() => {
     if (
       interaction?.type === 'resizing' &&
@@ -358,6 +394,20 @@ function WhiteboardStage({
     };
   };
 
+  const handleCropHandlePointerDown = (event: React.PointerEvent<SVGRectElement>, handle: CropHandle) => {
+    if (!imageCrop || !cropImageBounds) {
+      return;
+    }
+
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCropInteraction({
+      pointerId: event.pointerId,
+      handle,
+      initialRect: imageCrop.rect,
+      imageBounds: cropImageBounds,
+    });
+  };
   const getSlideAtPoint = (point: BoardPoint) => {
     for (let index = slides.length - 1; index >= 0; index -= 1) {
       const slide = slides[index];
@@ -618,6 +668,10 @@ function WhiteboardStage({
 
     const point = getWorldPoint(event);
     onRecordingPointerChange({ point, pressed: true, visible: true });
+    if (imageCrop) {
+      return;
+    }
+
     const targetScopeId = getSlideAtPoint(point)?.id ?? null;
     const isCreationTool =
       activeTool === 'draw' ||
@@ -911,6 +965,14 @@ function WhiteboardStage({
     const point = getWorldPoint(event);
     onRecordingPointerChange({ point, pressed: interaction?.pointerId === event.pointerId, visible: true });
 
+    if (cropInteraction && cropInteraction.pointerId === event.pointerId && imageCrop) {
+      onImageCropChange({
+        ...imageCrop,
+        rect: getResizedCropRect(cropInteraction.initialRect, cropInteraction.imageBounds, cropInteraction.handle, point),
+      });
+      return;
+    }
+
     if (!interaction || interaction.pointerId !== event.pointerId) {
       setHoverCursor(getHoverCursorForPoint(point));
       return;
@@ -1065,6 +1127,11 @@ function WhiteboardStage({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (cropInteraction && cropInteraction.pointerId === event.pointerId) {
+      setCropInteraction(null);
+      return;
+    }
+
     if (!interaction || interaction.pointerId !== event.pointerId) {
       return;
     }
@@ -1124,6 +1191,10 @@ function WhiteboardStage({
 
   const handleStageDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const point = getWorldPoint(event);
+    if (imageCrop) {
+      return;
+    }
+
     const targetScopeId = getSlideAtPoint(point)?.id ?? null;
 
     if (targetScopeId !== activeSlideId) {
@@ -1311,7 +1382,7 @@ function WhiteboardStage({
             />
           ) : null}
 
-          {shouldRenderSelectionBox && selectionOverlayBox
+          {!imageCrop && shouldRenderSelectionBox && selectionOverlayBox
             ? renderSelectionOverlay(selectionOverlayBox, selectionOverlayClassName, true, true)
             : selectionOverlayBox && !editingElement && !isMarqueeSelecting
               ? selectedSingleElementIsLinear && selectedSingleElement
@@ -1320,7 +1391,7 @@ function WhiteboardStage({
               : null}
 
 
-          {!editingElement && !isMarqueeSelecting && selectedSingleElement && selectionOverlayBox
+          {!imageCrop && !editingElement && !isMarqueeSelecting && selectedSingleElement && selectionOverlayBox
             ? shouldUseSelectionBoxResizeHandles(selectedSingleElement)
               ? renderSelectionResizeHandles(
                   selectionOverlayBox,
@@ -1331,11 +1402,24 @@ function WhiteboardStage({
               : renderHandles(selectedSingleElement)
             : null}
 
-          {!editingElement && !isMarqueeSelecting && !selectedSingleElement && selectionOverlayBox && selectedIds.length > 1
+          {!imageCrop && !editingElement && !isMarqueeSelecting && !selectedSingleElement && selectionOverlayBox && selectedIds.length > 1
             ? renderSelectionResizeHandles(selectionOverlayBox, 'board-stage__handle')
             : null}
+
+          {imageCrop && cropImageBounds ? renderImageCropOverlay(imageCrop.rect, cropImageBounds, handleCropHandlePointerDown) : null}
         </g>
       </svg>
+
+      {imageCrop && cropControlsStyle ? (
+        <div className="board-image-crop-actions" style={cropControlsStyle} onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" className="board-image-crop-action board-image-crop-action--confirm" onClick={onConfirmImageCrop} aria-label="确认裁剪">
+            ✓
+          </button>
+          <button type="button" className="board-image-crop-action board-image-crop-action--cancel" onClick={onCancelImageCrop} aria-label="取消裁剪">
+            ×
+          </button>
+        </div>
+      ) : null}
 
       {cameraSettings.enabled && cameraOverlayStyle ? (
         <div
@@ -2192,6 +2276,106 @@ function getLinearEndpointCursor(element: LinearElement) {
 
   return 'nesw-resize';
 }
+function renderImageCropOverlay(
+  rect: { x: number; y: number; width: number; height: number },
+  imageBounds: { x: number; y: number; width: number; height: number },
+  onHandlePointerDown: (event: React.PointerEvent<SVGRectElement>, handle: CropHandle) => void
+) {
+  const crop = clampCropRect(rect, imageBounds);
+  const right = crop.x + crop.width;
+  const bottom = crop.y + crop.height;
+  const imageRight = imageBounds.x + imageBounds.width;
+  const imageBottom = imageBounds.y + imageBounds.height;
+  const handles = getCropHandlePositions(crop);
+
+  return (
+    <g className="board-image-crop-overlay">
+      <rect className="board-image-crop-dim" x={imageBounds.x} y={imageBounds.y} width={imageBounds.width} height={crop.y - imageBounds.y} />
+      <rect className="board-image-crop-dim" x={imageBounds.x} y={bottom} width={imageBounds.width} height={imageBottom - bottom} />
+      <rect className="board-image-crop-dim" x={imageBounds.x} y={crop.y} width={crop.x - imageBounds.x} height={crop.height} />
+      <rect className="board-image-crop-dim" x={right} y={crop.y} width={imageRight - right} height={crop.height} />
+      <rect className="board-image-crop-box" x={crop.x} y={crop.y} width={crop.width} height={crop.height} />
+      {handles.map((handle) => (
+        <rect
+          key={handle.key}
+          className="board-image-crop-handle"
+          style={{ cursor: getDragHandleCursor(handle.key) }}
+          x={handle.x - 6}
+          y={handle.y - 6}
+          width={12}
+          height={12}
+          rx={3}
+          ry={3}
+          onPointerDown={(event) => onHandlePointerDown(event, handle.key)}
+        />
+      ))}
+    </g>
+  );
+}
+
+function getCropHandlePositions(rect: { x: number; y: number; width: number; height: number }) {
+  const cx = rect.x + rect.width / 2;
+  const cy = rect.y + rect.height / 2;
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
+  return [
+    { key: 'nw' as CropHandle, x: rect.x, y: rect.y },
+    { key: 'n' as CropHandle, x: cx, y: rect.y },
+    { key: 'ne' as CropHandle, x: right, y: rect.y },
+    { key: 'e' as CropHandle, x: right, y: cy },
+    { key: 'se' as CropHandle, x: right, y: bottom },
+    { key: 's' as CropHandle, x: cx, y: bottom },
+    { key: 'sw' as CropHandle, x: rect.x, y: bottom },
+    { key: 'w' as CropHandle, x: rect.x, y: cy },
+  ];
+}
+
+function getResizedCropRect(
+  initialRect: { x: number; y: number; width: number; height: number },
+  imageBounds: { x: number; y: number; width: number; height: number },
+  handle: CropHandle,
+  point: BoardPoint
+) {
+  const minSize = 12;
+  let minX = initialRect.x;
+  let minY = initialRect.y;
+  let maxX = initialRect.x + initialRect.width;
+  let maxY = initialRect.y + initialRect.height;
+  const imageMinX = imageBounds.x;
+  const imageMinY = imageBounds.y;
+  const imageMaxX = imageBounds.x + imageBounds.width;
+  const imageMaxY = imageBounds.y + imageBounds.height;
+
+  if (handle.includes('w')) {
+    minX = Math.min(maxX - minSize, Math.max(imageMinX, point.x));
+  }
+  if (handle.includes('e')) {
+    maxX = Math.max(minX + minSize, Math.min(imageMaxX, point.x));
+  }
+  if (handle.includes('n')) {
+    minY = Math.min(maxY - minSize, Math.max(imageMinY, point.y));
+  }
+  if (handle.includes('s')) {
+    maxY = Math.max(minY + minSize, Math.min(imageMaxY, point.y));
+  }
+
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function clampCropRect(
+  rect: { x: number; y: number; width: number; height: number },
+  imageBounds: { x: number; y: number; width: number; height: number }
+) {
+  const minX = imageBounds.x;
+  const minY = imageBounds.y;
+  const maxX = imageBounds.x + imageBounds.width;
+  const maxY = imageBounds.y + imageBounds.height;
+  const x = Math.min(maxX, Math.max(minX, rect.x));
+  const y = Math.min(maxY, Math.max(minY, rect.y));
+  const right = Math.min(maxX, Math.max(x, rect.x + rect.width));
+  const bottom = Math.min(maxY, Math.max(y, rect.y + rect.height));
+  return { x, y, width: right - x, height: bottom - y };
+}
 function renderSelectionResizeHandles(box: SelectionOverlayBox, className: string) {
   const transform = `translate(${box.centerX} ${box.centerY}) rotate(${box.rotation}) translate(${-box.centerX} ${-box.centerY})`;
 
@@ -2346,4 +2530,13 @@ function renderRotationIcon(centerX: number, centerY: number) {
 }
 
 export default WhiteboardStage;
+
+
+
+
+
+
+
+
+
 
