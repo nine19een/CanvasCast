@@ -1980,3 +1980,103 @@
   right: 0;
   bottom: 38px;
 }
+
+/* Slide navigator drag preview ordering. */
+.slide-navigator__item--dragging {
+  cursor: grabbing;
+  opacity: 0.56;
+  transform: scale(0.985);
+  z-index: 3;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+}
+
+.slide-navigator__item--drop-target:not(.slide-navigator__item--dragging) {
+  border-color: rgba(109, 93, 252, 0.34);
+}
+
+.slide-navigator__item--drop-before::before,
+.slide-navigator__item--drop-after::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(109, 93, 252, 0.78);
+  pointer-events: none;
+}
+
+.slide-navigator__item--drop-before::before {
+  top: -7px;
+}
+
+.slide-navigator__item--drop-after::after {
+  bottom: -7px;
+}
+
+/* Slide navigator drag edge targets. */
+.slide-navigator__list {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* Slide navigator gap-based drop indicator. */
+.slide-navigator__gap {
+  position: relative;
+  height: 0;
+  margin: -5px 0;
+  pointer-events: none;
+}
+
+.slide-navigator__gap--active {
+  height: 10px;
+  margin: -2px 0;
+}
+
+.slide-navigator__gap--active::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(109, 93, 252, 0.82);
+}
+
+.slide-navigator__item--drop-target:not(.slide-navigator__item--dragging),
+.slide-navigator__item--drop-before::before,
+.slide-navigator__item--drop-after::after {
+  border-color: inherit;
+  background: transparent;
+  content: none;
+}
+
+/* Slide navigator uses live ordering as the only drag cue. */
+.slide-navigator__item--dragging {
+  pointer-events: none;
+  opacity: 0.72;
+  transform: scale(0.985);
+  border-style: dashed;
+  border-color: rgba(109, 93, 252, 0.45);
+  background: rgba(109, 93, 252, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(109, 93, 252, 0.12);
+}
+
+.slide-navigator__gap,
+.slide-navigator__gap--active {
+  display: none !important;
+}
+
+.slide-navigator__gap--active::before,
+.slide-navigator__item--drop-before::before,
+.slide-navigator__item--drop-after::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* Keep the native HTML drag source mounted and interactive while preview order changes. */
+.slide-navigator__item--dragging {
+  pointer-events: auto;
+}

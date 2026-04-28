@@ -1,5 +1,5 @@
 ﻿import type React from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FloatingControlBar from './FloatingControlBar';
 import LeftPropertiesPanel from './LeftPropertiesPanel';
 import TeleprompterPanel, { DEFAULT_TELEPROMPTER_STATE, type TeleprompterPanelState } from './TeleprompterPanel';
@@ -891,7 +891,7 @@ function WhiteboardPage({
   );
 
   const reorderSlides = useCallback(
-    (sourceSlideId: string, targetSlideId: string) => {
+    (sourceSlideId: string, targetSlideId: string, placement: 'before' | 'after' = 'before') => {
       if (isSlideStructureLocked) {
         return;
       }
@@ -910,7 +910,14 @@ function WhiteboardPage({
 
       const orderedSlides = [...currentSlides];
       const [movedSlide] = orderedSlides.splice(sourceIndex, 1);
-      orderedSlides.splice(targetIndex, 0, movedSlide);
+      const targetIndexAfterRemoval = orderedSlides.findIndex((slide) => slide.id === targetSlideId);
+
+      if (targetIndexAfterRemoval < 0) {
+        return;
+      }
+
+      const insertIndex = placement === 'after' ? targetIndexAfterRemoval + 1 : targetIndexAfterRemoval;
+      orderedSlides.splice(insertIndex, 0, movedSlide);
       const nextSlides = reflowSlideFrames(orderedSlides, slideAspectRatio);
       setSlides(nextSlides);
 
@@ -2534,15 +2541,19 @@ function SlideNavigator({
   onDeleteSlide: (slideId: string) => void;
   onDuplicateSlide: (slideId: string) => void;
   onRenameSlide: (slideId: string, nextName: string) => void;
-  onReorderSlide: (sourceSlideId: string, targetSlideId: string) => void;
+  onReorderSlide: (sourceSlideId: string, targetSlideId: string, placement?: 'before' | 'after') => void;
   onSelectSlide: (slideId: string) => void;
   recordingVisualSettings: RecordingVisualSettings;
 }) {
   const [draggingSlideId, setDraggingSlideId] = useState<string | null>(null);
-  const [dragOverSlideId, setDragOverSlideId] = useState<string | null>(null);
+  const [dragPreviewSlideIds, setDragPreviewSlideIds] = useState<string[] | null>(null);
   const [editingSlideId, setEditingSlideId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [openMenuSlideId, setOpenMenuSlideId] = useState<string | null>(null);
+  const navigatorRef = useRef<HTMLElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const dragDropIntentRef = useRef<{ targetSlideId: string; placement: 'before' | 'after'; insertionIndex: number } | null>(null);
+  const dragInsertionIndexRef = useRef<number | null>(null);
   const lockedTitle = isStructureLocked ? '\u5f55\u5236\u4e2d\u4e0d\u80fd\u4fee\u6539\u5e7b\u706f\u7247\u7ed3\u6784' : undefined;
 
   useEffect(() => {
@@ -2551,11 +2562,31 @@ function SlideNavigator({
     }
 
     setDraggingSlideId(null);
-    setDragOverSlideId(null);
+    setDragPreviewSlideIds(null);
+    dragDropIntentRef.current = null;
+    dragInsertionIndexRef.current = null;
     setEditingSlideId(null);
     setRenameDraft('');
     setOpenMenuSlideId(null);
   }, [isStructureLocked]);
+
+  useEffect(() => {
+    if (!openMenuSlideId) {
+      return;
+    }
+
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && navigatorRef.current?.contains(target)) {
+        return;
+      }
+
+      setOpenMenuSlideId(null);
+    };
+
+    document.addEventListener('pointerdown', handleDocumentPointerDown);
+    return () => document.removeEventListener('pointerdown', handleDocumentPointerDown);
+  }, [openMenuSlideId]);
 
   const beginRename = (slide: Slide) => {
     if (isStructureLocked) {
@@ -2583,12 +2614,149 @@ function SlideNavigator({
     cancelRename();
   };
 
+  const visibleSlides = useMemo(() => {
+    if (!dragPreviewSlideIds) {
+      return slides;
+    }
+
+    const slidesById = new Map(slides.map((slide) => [slide.id, slide]));
+    const orderedSlides = dragPreviewSlideIds.flatMap((slideId) => {
+      const slide = slidesById.get(slideId);
+      return slide ? [slide] : [];
+    });
+    const previewIds = new Set(dragPreviewSlideIds);
+
+    for (const slide of slides) {
+      if (!previewIds.has(slide.id)) {
+        orderedSlides.push(slide);
+      }
+    }
+
+    return orderedSlides;
+  }, [dragPreviewSlideIds, slides]);
+
+  const resetDragPreview = () => {
+    setDraggingSlideId(null);
+    setDragPreviewSlideIds(null);
+    dragDropIntentRef.current = null;
+    dragInsertionIndexRef.current = null;
+  };
+
+  const getBaseSlideIds = (sourceSlideId: string) => slides.map((slide) => slide.id).filter((slideId) => slideId !== sourceSlideId);
+
+  const getPreviewSlideIds = (sourceSlideId: string, insertionIndex: number) => {
+    const baseSlideIds = getBaseSlideIds(sourceSlideId);
+    const safeIndex = Math.max(0, Math.min(insertionIndex, baseSlideIds.length));
+    return [...baseSlideIds.slice(0, safeIndex), sourceSlideId, ...baseSlideIds.slice(safeIndex)];
+  };
+
+  const getDropIntentFromInsertionIndex = (sourceSlideId: string, insertionIndex: number) => {
+    const baseSlideIds = getBaseSlideIds(sourceSlideId);
+    if (baseSlideIds.length === 0) {
+      return null;
+    }
+
+    const safeIndex = Math.max(0, Math.min(insertionIndex, baseSlideIds.length));
+    if (safeIndex === 0) {
+      return { targetSlideId: baseSlideIds[0], placement: 'before' as const, insertionIndex: safeIndex };
+    }
+
+    return { targetSlideId: baseSlideIds[safeIndex - 1], placement: 'after' as const, insertionIndex: safeIndex };
+  };
+
+  const computeInsertionIndexFromPointer = (sourceSlideId: string, pointerY: number) => {
+    const listElement = listRef.current;
+    if (!listElement) {
+      return dragInsertionIndexRef.current ?? 0;
+    }
+
+    const baseSlideIds = getBaseSlideIds(sourceSlideId);
+    if (baseSlideIds.length === 0) {
+      return 0;
+    }
+
+    const midpoints = baseSlideIds.map((slideId) => {
+      const element = listElement.querySelector<HTMLElement>(`[data-slide-id="${slideId}"]`);
+      if (!element) {
+        return null;
+      }
+
+      const rect = element.getBoundingClientRect();
+      return rect.top + rect.height / 2;
+    });
+
+    let nextIndex = baseSlideIds.length;
+    for (let index = 0; index < midpoints.length; index += 1) {
+      const midpoint = midpoints[index];
+      if (midpoint !== null && pointerY < midpoint) {
+        nextIndex = index;
+        break;
+      }
+    }
+
+    const currentIndex = dragInsertionIndexRef.current;
+    if (currentIndex !== null && currentIndex !== nextIndex) {
+      const boundaryIndex = Math.min(currentIndex, nextIndex);
+      const boundary = midpoints[boundaryIndex];
+      if (boundary !== null && Math.abs(pointerY - boundary) < 10) {
+        return currentIndex;
+      }
+    }
+
+    return nextIndex;
+  };
+
+  const updateDragPreview = (sourceSlideId: string, insertionIndex: number) => {
+    const dropIntent = getDropIntentFromInsertionIndex(sourceSlideId, insertionIndex);
+    if (!dropIntent) {
+      return;
+    }
+
+    const nextPreviewIds = getPreviewSlideIds(sourceSlideId, dropIntent.insertionIndex);
+    const currentPreviewIds = dragPreviewSlideIds ?? slides.map((slide) => slide.id);
+
+    dragDropIntentRef.current = dropIntent;
+    dragInsertionIndexRef.current = dropIntent.insertionIndex;
+    if (nextPreviewIds.join('|') !== currentPreviewIds.join('|')) {
+      setDragPreviewSlideIds(nextPreviewIds);
+    }
+  };
+
+  const handleDragPreviewMove = (event: React.DragEvent<HTMLElement>) => {
+    if (isStructureLocked) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+
+    const sourceSlideId = draggingSlideId ?? event.dataTransfer.getData('text/plain');
+    if (!sourceSlideId) {
+      return;
+    }
+
+    updateDragPreview(sourceSlideId, computeInsertionIndexFromPointer(sourceSlideId, event.clientY));
+  };
+
   return (
-    <aside className="slide-navigator" aria-label="Slide navigation">
+    <aside ref={navigatorRef} className="slide-navigator" aria-label="Slide navigation">
       <div className="slide-navigator__header">
         <h2 className="slide-navigator__title">{`\u5e7b\u706f\u7247`}</h2>
       </div>
-      <div className="slide-navigator__list">
+      <div
+        ref={listRef}
+        className="slide-navigator__list"
+        onDragOver={handleDragPreviewMove}
+        onDrop={(event) => {
+          event.preventDefault();
+          const sourceSlideId = draggingSlideId ?? event.dataTransfer.getData('text/plain');
+          const dropIntent = dragDropIntentRef.current;
+          resetDragPreview();
+          if (!isStructureLocked && sourceSlideId && dropIntent) {
+            onReorderSlide(sourceSlideId, dropIntent.targetSlideId, dropIntent.placement);
+          }
+        }}
+      >
         {slides.length === 0 ? (
           <button
             type="button"
@@ -2600,16 +2768,17 @@ function SlideNavigator({
             <span className="slide-navigator__empty-plus">+</span>
             <span>{`\u70b9\u51fb\u6b64\u5904\u6dfb\u52a0\u7b2c\u4e00\u5f20\u5e7b\u706f\u7247`}</span>
           </button>
-        ) : slides.map((slide, index) => {
+        ) : visibleSlides.map((slide, index) => {
           const isActive = slide.id === activeSlideId;
           const isEditing = editingSlideId === slide.id;
           const isMenuOpen = openMenuSlideId === slide.id;
           return (
-            <div
-              key={slide.id}
-              className={`slide-navigator__item${isActive ? ' slide-navigator__item--active' : ''}${
-                draggingSlideId === slide.id ? ' slide-navigator__item--dragging' : ''
-              }${dragOverSlideId === slide.id && draggingSlideId !== slide.id ? ' slide-navigator__item--drop-target' : ''}`}
+            <Fragment key={slide.id}>
+              <div
+                data-slide-id={slide.id}
+                className={`slide-navigator__item${isActive ? ' slide-navigator__item--active' : ''}${
+                  draggingSlideId === slide.id ? ' slide-navigator__item--dragging' : ''
+                }`}
               draggable={!isEditing && !isStructureLocked}
               onDragStart={(event) => {
                 if (isStructureLocked) {
@@ -2618,45 +2787,21 @@ function SlideNavigator({
                 }
 
                 setDraggingSlideId(slide.id);
+                setDragPreviewSlideIds(slides.map((currentSlide) => currentSlide.id));
+                dragDropIntentRef.current = null;
+                dragInsertionIndexRef.current = null;
                 event.dataTransfer.effectAllowed = 'move';
                 event.dataTransfer.setData('text/plain', slide.id);
               }}
-              onDragOver={(event) => {
-                if (isStructureLocked) {
-                  return;
-                }
-
-                event.preventDefault();
-                event.dataTransfer.dropEffect = 'move';
-                setDragOverSlideId(slide.id);
-              }}
-              onDragLeave={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                  setDragOverSlideId((current) => (current === slide.id ? null : current));
-                }
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                if (isStructureLocked) {
-                  setDraggingSlideId(null);
-                  setDragOverSlideId(null);
-                  return;
-                }
-
-                const sourceSlideId = draggingSlideId ?? event.dataTransfer.getData('text/plain');
-                setDraggingSlideId(null);
-                setDragOverSlideId(null);
-                if (sourceSlideId) {
-                  onReorderSlide(sourceSlideId, slide.id);
-                }
-              }}
               onDragEnd={() => {
-                setDraggingSlideId(null);
-                setDragOverSlideId(null);
+                resetDragPreview();
               }}
-              onClick={() => onSelectSlide(slide.id)}
+              onClick={() => {
+                setOpenMenuSlideId(null);
+                onSelectSlide(slide.id);
+              }}
             >
-              <button type="button" className="slide-navigator__thumbnail-button" onClick={(event) => { event.stopPropagation(); onSelectSlide(slide.id); }}>
+              <button type="button" className="slide-navigator__thumbnail-button" onClick={(event) => { event.stopPropagation(); setOpenMenuSlideId(null); onSelectSlide(slide.id); }}>
                 <SlideThumbnail slide={slide} recordingVisualSettings={recordingVisualSettings} />
               </button>
 
@@ -2759,7 +2904,8 @@ function SlideNavigator({
                   ) : null}
                 </div>
               </div>
-            </div>
+              </div>
+            </Fragment>
           );
         })}
       </div>
@@ -2802,7 +2948,6 @@ function SlideThumbnail({ slide, recordingVisualSettings }: { slide: Slide; reco
     </svg>
   );
 }
-
 function renderSlideThumbnailElement(element: BoardElement) {
   return (
     <g key={element.id} transform={getSvgElementTransform(element)} opacity={clampOpacity(element.opacity)}>
@@ -4127,6 +4272,15 @@ function isCornerRadiusEditableElement(element: BoardElement): element is Extrac
 }
 
 export default WhiteboardPage;
+
+
+
+
+
+
+
+
+
 
 
 
