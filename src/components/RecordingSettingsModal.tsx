@@ -190,9 +190,8 @@ function CanvasSection({
         />
       </div>
       <div className="settings-subsection">
-        <div className="settings-subsection-title">背景</div>
-        <div className="settings-field-label">背景颜色</div>
-        <div className="canvas-background-color-grid" role="group" aria-label="背景颜色">
+        <div className="settings-field-label">画布颜色</div>
+        <div className="canvas-background-color-grid" role="group" aria-label="画布颜色">
           {canvasBackgroundColors.map((color) => (
             <button
               key={color.value}
@@ -208,8 +207,8 @@ function CanvasSection({
             type="button"
             className={`canvas-background-color canvas-background-color--custom ${!isPresetColorSelected ? 'canvas-background-color--active' : ''}`}
             onClick={() => customColorInputRef.current?.click()}
-            aria-label="自定义背景颜色"
-            title="自定义背景颜色"
+            aria-label="自定义画布颜色"
+            title="自定义画布颜色"
           >
             <span>+</span>
             <input
@@ -217,13 +216,13 @@ function CanvasSection({
               type="color"
               value={selectedBackgroundColor}
               onChange={(event) => onChange({ canvasBackgroundColor: event.target.value })}
-              aria-label="自定义背景颜色"
+              aria-label="自定义画布颜色"
             />
           </button>
         </div>
 
-        <div className="settings-field-label">背景样式</div>
-        <div className="canvas-pattern-grid" role="group" aria-label="背景样式">
+        <div className="settings-field-label">画布样式</div>
+        <div className="canvas-pattern-grid" role="group" aria-label="画布样式">
           {canvasBackgroundPatterns.map((pattern) => (
             <button
               key={pattern.value}

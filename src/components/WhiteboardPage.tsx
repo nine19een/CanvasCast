@@ -39,6 +39,7 @@ import {
   MAX_VIEWPORT_ZOOM,
   MIN_VIEWPORT_ZOOM,
   ZOOM_BUTTON_STEP,
+  resolveTextFontFamily,
 } from '../whiteboard/types';
 import {
   duplicateElements,
@@ -3032,7 +3033,7 @@ function renderSlideThumbnailElementContent(element: BoardElement) {
         <foreignObject key={element.id} x={element.x} y={element.y} width={element.width} height={element.height}>
           <div
             className="slide-thumbnail-text"
-            style={{ fontFamily: element.fontFamily, fontSize: `${element.fontSize}px`, color: element.color }}
+            style={{ fontFamily: resolveTextFontFamily(element.fontFamily), fontSize: `${element.fontSize}px`, color: element.color }}
           >
             {element.text || 'Text'}
           </div>
@@ -3747,7 +3748,7 @@ function getCanvasArrowGeometry(element: LinearElement) {
 
 function drawCanvasText(context: CanvasRenderingContext2D, element: Extract<BoardElement, { type: 'text' }>) {
   context.fillStyle = element.color;
-  context.font = `${element.fontSize}px ${element.fontFamily}`;
+  context.font = `${element.fontSize}px ${resolveTextFontFamily(element.fontFamily)}`;
   context.textBaseline = 'top';
   const lineHeight = element.fontSize * 1.25;
   element.text.split('\n').forEach((line, index) => {

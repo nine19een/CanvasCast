@@ -228,7 +228,8 @@ function TeleprompterPanel({ value, onChange, onClose }: TeleprompterPanelProps)
       } as CSSProperties}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="teleprompter-panel__header" onPointerDown={handleHeaderPointerDown}>
+      <div className="teleprompter-panel__surface">
+        <div className="teleprompter-panel__header" onPointerDown={handleHeaderPointerDown}>
         <div className="teleprompter-panel__title">
           <span aria-hidden="true">T</span>
           <strong>{'\u63d0\u8bcd\u5668'}</strong>
@@ -251,6 +252,10 @@ function TeleprompterPanel({ value, onChange, onClose }: TeleprompterPanelProps)
           ref={scriptRef}
           className="teleprompter-panel__script"
           value={value.text}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          autoComplete="off"
           placeholder={'\u5728\u6b64\u7c98\u8d34\u4f60\u7684\u811a\u672c...'}
           onChange={(event) => onChange({ text: event.target.value })}
           onScroll={(event) => {
@@ -304,6 +309,7 @@ function TeleprompterPanel({ value, onChange, onClose }: TeleprompterPanelProps)
             />
           </label>
         </div>
+      </div>
       </div>
     </div>
   );

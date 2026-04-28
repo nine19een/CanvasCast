@@ -79,21 +79,69 @@ export const BOARD_COLOR_OPTIONS = [
   '#ea580c',
 ] as const;
 
+export const TEXT_FONT_OPTIONS = [
+  {
+    value: 'default',
+    label: '\u9ed8\u8ba4',
+    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif',
+  },
+  {
+    value: 'handwriting',
+    label: '\u624b\u5199',
+    fontFamily: '"Comic Sans MS", "Kaiti SC", "KaiTi", "STKaiti", cursive',
+  },
+  {
+    value: 'serif',
+    label: '\u886c\u7ebf',
+    fontFamily: 'Georgia, "Times New Roman", "Songti SC", SimSun, serif',
+  },
+  {
+    value: 'mono',
+    label: '\u7b49\u5bbd',
+    fontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+  },
+] as const;
+
+export type TextFontOptionValue = (typeof TEXT_FONT_OPTIONS)[number]['value'];
+
+export const TEXT_FONT_SIZE_MIN = 12;
+export const TEXT_FONT_SIZE_MAX = 96;
+export const TEXT_FONT_SIZE_STEP = 2;
+
 export const DEFAULT_TEXT_STYLE: TextStyle = {
-  fontFamily: 'system-ui',
+  fontFamily: TEXT_FONT_OPTIONS[0].fontFamily,
   fontSize: 28,
   color: '#111827',
   opacity: 1,
 };
 
-export const TEXT_FONT_OPTIONS = [
-  { label: 'System', value: 'system-ui' },
-  { label: 'Serif', value: 'serif' },
-  { label: 'Mono', value: 'monospace' },
-  { label: 'Rounded', value: 'ui-rounded, system-ui' },
-] as const;
-
 export const TEXT_SIZE_OPTIONS = [16, 20, 24, 28, 32, 40] as const;
+
+export function normalizeTextFontValue(fontFamily: string | null | undefined): TextFontOptionValue {
+  const normalized = (fontFamily ?? '').trim().toLowerCase();
+  if (!normalized || normalized === 'system' || normalized === 'system-ui' || normalized === 'default') {
+    return 'default';
+  }
+  if (normalized === 'rounded' || normalized.includes('ui-rounded')) {
+    return 'default';
+  }
+  if (normalized === 'handwriting' || normalized.includes('comic sans') || normalized.includes('kaiti') || normalized.includes('stkaiti')) {
+    return 'handwriting';
+  }
+  if (normalized === 'serif' || normalized.includes('georgia') || normalized.includes('times new roman') || normalized.includes('songti') || normalized.includes('simsun')) {
+    return 'serif';
+  }
+  if (normalized === 'mono' || normalized === 'monospace' || normalized.includes('jetbrains mono') || normalized.includes('sfmono') || normalized.includes('consolas') || normalized.includes('liberation mono')) {
+    return 'mono';
+  }
+
+  return 'default';
+}
+
+export function resolveTextFontFamily(fontFamily: string | null | undefined): string {
+  const value = normalizeTextFontValue(fontFamily);
+  return TEXT_FONT_OPTIONS.find((option) => option.value === value)?.fontFamily ?? TEXT_FONT_OPTIONS[0].fontFamily;
+}
 
 export const TEXT_COLOR_OPTIONS = BOARD_COLOR_OPTIONS;
 

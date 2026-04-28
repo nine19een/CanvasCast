@@ -14,7 +14,10 @@ import {
   MIN_CORNER_RADIUS,
   MIN_STROKE_WIDTH,
   TEXT_FONT_OPTIONS,
-  TEXT_SIZE_OPTIONS,
+  TEXT_FONT_SIZE_MAX,
+  TEXT_FONT_SIZE_MIN,
+  TEXT_FONT_SIZE_STEP,
+  normalizeTextFontValue,
 } from '../whiteboard/types';
 
 type StyleChangeOptions = {
@@ -135,6 +138,8 @@ function LeftPropertiesPanel({
   const showStyleControls = hasSelection ? Boolean(colorStyle) : STYLE_TOOL_TYPES.has(activeTool) && Boolean(colorStyle);
   const showSelectionActions = hasSelection;
   const effectiveTextStyle = textStyle ?? DEFAULT_TEXT_STYLE;
+  const activeTextFont = normalizeTextFontValue(effectiveTextStyle.fontFamily);
+  const activeTextFontSize = clampTextFontSize(effectiveTextStyle.fontSize);
   const activeColor = colorStyle?.color ?? DEFAULT_BOARD_COLOR;
   const opacityPercent = Math.round(clampOpacity(colorStyle?.opacity) * 100);
   const strokeWidthValue = strokeWidth === null ? DEFAULT_STROKE_WIDTH : clampStrokeWidth(strokeWidth);
@@ -315,34 +320,41 @@ function LeftPropertiesPanel({
           {showTextControls ? (
             <section className="board-properties-panel__section">
               <h3 className="board-properties-panel__title">{`\u6587\u5b57`}</h3>
-              <label className="board-properties-panel__field">
+              <div className="board-properties-panel__field">
                 <span className="board-properties-panel__field-label">{`\u5b57\u4f53`}</span>
-                <select
-                  className="board-properties-panel__select"
-                  value={effectiveTextStyle.fontFamily}
-                  onChange={(event) => onTextStyleChange({ fontFamily: event.target.value })}
-                >
-                  {TEXT_FONT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <div className="board-properties-panel__font-grid" role="group" aria-label={`\u5b57\u4f53`}>
+                  {TEXT_FONT_OPTIONS.map((option) => {
+                    const isActive = activeTextFont === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`board-properties-panel__font-button${isActive ? ' board-properties-panel__font-button--active' : ''}`}
+                        onClick={() => onTextStyleChange({ fontFamily: option.fontFamily })}
+                        aria-pressed={isActive}
+                        title={option.label}
+                      >
+                        <span className="board-properties-panel__font-preview" style={{ fontFamily: option.fontFamily }}>
+                          {`Aa \u5b57`}
+                        </span>
+                        <span className="board-properties-panel__font-label">{option.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <label className="board-properties-panel__field">
-                <span className="board-properties-panel__field-label">{`\u5b57\u53f7`}</span>
-                <select
-                  className="board-properties-panel__select"
-                  value={effectiveTextStyle.fontSize}
+                <span className="board-properties-panel__field-label">{`\u5b57\u53f7 - ${activeTextFontSize}px`}</span>
+                <input
+                  className="board-properties-panel__range"
+                  type="range"
+                  min={TEXT_FONT_SIZE_MIN}
+                  max={TEXT_FONT_SIZE_MAX}
+                  step={TEXT_FONT_SIZE_STEP}
+                  value={activeTextFontSize}
                   onChange={(event) => onTextStyleChange({ fontSize: Number(event.target.value) })}
-                >
-                  {TEXT_SIZE_OPTIONS.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
             </section>
           ) : null}
@@ -629,6 +641,14 @@ function renderPanelIcon(name: PanelIconName) {
       return null;
   }
 }
+function clampTextFontSize(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_TEXT_STYLE.fontSize;
+  }
+
+  return Math.min(TEXT_FONT_SIZE_MAX, Math.max(TEXT_FONT_SIZE_MIN, Math.round(value / TEXT_FONT_SIZE_STEP) * TEXT_FONT_SIZE_STEP));
+}
+
 function clampOpacity(value: number | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0.1, value)) : 1;
 }

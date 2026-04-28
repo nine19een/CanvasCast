@@ -2,7 +2,7 @@
 import type { CameraSettings, RecordingVisualSettings } from '../cameraTypes';
 import type { BackgroundSwatch } from '../mockOptions';
 import { getRecordingCompositionLayout } from '../recordingLayout';
-import { getCanvasBackgroundCss } from '../canvasBackground';
+import { getCanvasBackgroundCssWithSpacing } from '../canvasBackground';
 
 type PreviewPanelProps = {
   aspectRatio: number;
@@ -124,7 +124,9 @@ function PreviewPanel({ aspectRatio, background, visualSettings, cameraSettings,
       Math.max(8, Math.min(canvasRect.width, canvasRect.height) * 0.08)
     )
   );
-  const canvasBackgroundStyle = getCanvasBackgroundCss(visualSettings);
+  const previewPatternScale = sourceFrame.width > 0 ? canvasRect.width / sourceFrame.width : 1;
+  const previewPatternSpacing = Math.max(2, visualSettings.canvasBackgroundSpacing * previewPatternScale);
+  const canvasBackgroundStyle = getCanvasBackgroundCssWithSpacing(visualSettings, previewPatternSpacing);
 
   return (
     <div ref={panelRef} className="preview-panel">
@@ -183,4 +185,5 @@ function PreviewPanel({ aspectRatio, background, visualSettings, cameraSettings,
 }
 
 export default PreviewPanel;
+
 

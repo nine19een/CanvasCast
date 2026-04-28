@@ -27,6 +27,7 @@ import {
   MAX_STROKE_WIDTH,
   MIN_CORNER_RADIUS,
   MIN_STROKE_WIDTH,
+  resolveTextFontFamily,
 } from '../whiteboard/types';
 import {
   generateElementId,
@@ -567,6 +568,15 @@ function WhiteboardStage({
       return 'move';
     }
 
+    if (
+      selectedSingleElement &&
+      (selectedSingleElement.type === 'rectangle' || selectedSingleElement.type === 'ellipse') &&
+      selectionOverlayBox &&
+      isPointInsideSelectionOverlayBox(point, selectionOverlayBox)
+    ) {
+      return 'move';
+    }
+
     if (selectedIds.length > 1 && selectionOverlayBox && isPointInsideSelectionOverlayBox(point, selectionOverlayBox)) {
       return 'move';
     }
@@ -720,6 +730,115 @@ function WhiteboardStage({
       return;
     }
 
+    if (activeTool === 'select') {
+      const linearHandle = getLinearResizeHandle(point);
+      if (linearHandle && selectedSingleElement) {
+        const bounds = getElementBounds(selectedSingleElement);
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setInteraction({
+          type: 'resizing',
+          pointerId: event.pointerId,
+          elementId: selectedSingleElement.id,
+          handle: linearHandle,
+          snapshot: selectedSingleElement,
+          initialElements: structuredClone(elements),
+          selectionBounds: bounds,
+          selectionCenter: { x: bounds.cx, y: bounds.cy },
+          selectionRotation: normalizeRotation(selectedSingleElement.rotation ?? 0),
+          targetIds: [selectedSingleElement.id],
+        });
+        return;
+      }
+
+      const boxHandle = getBoxResizeHandle(point);
+      if (boxHandle) {
+        if (selectedSingleElement) {
+          const bounds = selectionOverlayBox
+            ? {
+                x: selectionOverlayBox.x,
+                y: selectionOverlayBox.y,
+                width: selectionOverlayBox.width,
+                height: selectionOverlayBox.height,
+              }
+            : getElementBounds(selectedSingleElement);
+          const center = selectionOverlayBox
+            ? { x: selectionOverlayBox.centerX, y: selectionOverlayBox.centerY }
+            : getElementCenter(selectedSingleElement);
+
+          event.currentTarget.setPointerCapture(event.pointerId);
+
+          setInteraction({
+            type: 'resizing',
+            pointerId: event.pointerId,
+            elementId: selectedSingleElement.id,
+            handle: boxHandle,
+            snapshot: selectedSingleElement,
+            initialElements: structuredClone(elements),
+            selectionBounds: bounds,
+            selectionCenter: center,
+            selectionRotation: selectionOverlayBox?.rotation ?? normalizeRotation(selectedSingleElement.rotation ?? 0),
+            targetIds: [selectedSingleElement.id],
+          });
+          return;
+        }
+
+        if (selectedBounds && selectedIds.length > 1) {
+          const snapshot = Object.fromEntries(
+            elements
+              .filter((element) => selectedIds.includes(element.id))
+              .map((element) => [element.id, structuredClone(element)])
+          ) as ElementSnapshot;
+          const bounds = selectionOverlayBox
+            ? {
+                x: selectionOverlayBox.x,
+                y: selectionOverlayBox.y,
+                width: selectionOverlayBox.width,
+                height: selectionOverlayBox.height,
+              }
+            : structuredClone(selectedBounds);
+          const center = selectionOverlayBox
+            ? { x: selectionOverlayBox.centerX, y: selectionOverlayBox.centerY }
+            : { x: selectedBounds.x + selectedBounds.width / 2, y: selectedBounds.y + selectedBounds.height / 2 };
+
+          event.currentTarget.setPointerCapture(event.pointerId);
+
+          setInteraction({
+            type: 'resizing',
+            pointerId: event.pointerId,
+            elementId: null,
+            handle: boxHandle,
+            snapshot,
+            initialElements: structuredClone(elements),
+            selectionBounds: bounds,
+            selectionCenter: center,
+            selectionRotation: selectionOverlayBox?.rotation ?? 0,
+            targetIds: [...selectedIds],
+          });
+          return;
+        }
+      }
+
+      if (allowBoundsDrag && selectedBounds && selectedIds.length > 0 && isPointInBounds(point, selectedBounds)) {
+        const snapshot = Object.fromEntries(
+          elements
+            .filter((element) => selectedIds.includes(element.id))
+            .map((element) => [element.id, structuredClone(element)])
+        ) as ElementSnapshot;
+
+        event.currentTarget.setPointerCapture(event.pointerId);
+
+        setInteraction({
+          type: 'moving',
+          pointerId: event.pointerId,
+          startPoint: point,
+          snapshot,
+          initialElements: structuredClone(elements),
+        });
+        return;
+      }
+
+    }
+
     if (isCreationTool && targetScopeId !== activeSlideId) {
       onActiveSlideChange(targetScopeId);
     }
@@ -835,105 +954,6 @@ function WhiteboardStage({
       onCommitElementsChange(scopeElements, nextElements);
       onSelectedIdsChange([nextId]);
       onTextEditorChange({ elementId: nextId, value: 'Text' });
-      return;
-    }
-
-    const linearHandle = getLinearResizeHandle(point);
-    if (linearHandle && selectedSingleElement) {
-      const bounds = getElementBounds(selectedSingleElement);
-      setInteraction({
-        type: 'resizing',
-        pointerId: event.pointerId,
-        elementId: selectedSingleElement.id,
-        handle: linearHandle,
-        snapshot: selectedSingleElement,
-        initialElements: structuredClone(elements),
-        selectionBounds: bounds,
-        selectionCenter: { x: bounds.cx, y: bounds.cy },
-        selectionRotation: normalizeRotation(selectedSingleElement.rotation ?? 0),
-        targetIds: [selectedSingleElement.id],
-      });
-      return;
-    }
-
-    const boxHandle = getBoxResizeHandle(point);
-    if (boxHandle) {
-      if (selectedSingleElement) {
-        const bounds = selectionOverlayBox
-          ? {
-              x: selectionOverlayBox.x,
-              y: selectionOverlayBox.y,
-              width: selectionOverlayBox.width,
-              height: selectionOverlayBox.height,
-            }
-          : getElementBounds(selectedSingleElement);
-        const center = selectionOverlayBox
-          ? { x: selectionOverlayBox.centerX, y: selectionOverlayBox.centerY }
-          : getElementCenter(selectedSingleElement);
-
-        setInteraction({
-          type: 'resizing',
-          pointerId: event.pointerId,
-          elementId: selectedSingleElement.id,
-          handle: boxHandle,
-          snapshot: selectedSingleElement,
-          initialElements: structuredClone(elements),
-          selectionBounds: bounds,
-          selectionCenter: center,
-          selectionRotation: selectionOverlayBox?.rotation ?? normalizeRotation(selectedSingleElement.rotation ?? 0),
-          targetIds: [selectedSingleElement.id],
-        });
-        return;
-      }
-
-      if (selectedBounds && selectedIds.length > 1) {
-        const snapshot = Object.fromEntries(
-          elements
-            .filter((element) => selectedIds.includes(element.id))
-            .map((element) => [element.id, structuredClone(element)])
-        ) as ElementSnapshot;
-        const bounds = selectionOverlayBox
-          ? {
-              x: selectionOverlayBox.x,
-              y: selectionOverlayBox.y,
-              width: selectionOverlayBox.width,
-              height: selectionOverlayBox.height,
-            }
-          : structuredClone(selectedBounds);
-        const center = selectionOverlayBox
-          ? { x: selectionOverlayBox.centerX, y: selectionOverlayBox.centerY }
-          : { x: selectedBounds.x + selectedBounds.width / 2, y: selectedBounds.y + selectedBounds.height / 2 };
-
-        setInteraction({
-          type: 'resizing',
-          pointerId: event.pointerId,
-          elementId: null,
-          handle: boxHandle,
-          snapshot,
-          initialElements: structuredClone(elements),
-          selectionBounds: bounds,
-          selectionCenter: center,
-          selectionRotation: selectionOverlayBox?.rotation ?? 0,
-          targetIds: [...selectedIds],
-        });
-        return;
-      }
-    }
-
-    if (allowBoundsDrag && selectedBounds && selectedIds.length > 0 && isPointInBounds(point, selectedBounds)) {
-      const snapshot = Object.fromEntries(
-        elements
-          .filter((element) => selectedIds.includes(element.id))
-          .map((element) => [element.id, structuredClone(element)])
-      ) as ElementSnapshot;
-
-      setInteraction({
-        type: 'moving',
-        pointerId: event.pointerId,
-        startPoint: point,
-        snapshot,
-        initialElements: structuredClone(elements),
-      });
       return;
     }
 
@@ -1482,6 +1502,10 @@ function WhiteboardStage({
           ref={textEditorRef}
           className="board-text-editor"
           value={textEditor?.value ?? ''}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          autoComplete="off"
           autoFocus
           style={{
             left: `${editingElement.x * viewport.zoom + viewport.x}px`,
@@ -1490,7 +1514,7 @@ function WhiteboardStage({
             height: `${activeEditorHeight ?? editingElement.height}px`,
             transform: `scale(${viewport.zoom})`,
             transformOrigin: 'top left',
-            fontFamily: editingElement.fontFamily,
+            fontFamily: resolveTextFontFamily(editingElement.fontFamily),
             fontSize: `${editingElement.fontSize}px`,
             color: editingElement.color,
           }}
@@ -2076,7 +2100,7 @@ function renderElementContent(element: BoardElement) {
           <div
             className="board-text-node"
             style={{
-              fontFamily: element.fontFamily,
+              fontFamily: resolveTextFontFamily(element.fontFamily),
               fontSize: `${element.fontSize}px`,
               color: element.color,
             }}

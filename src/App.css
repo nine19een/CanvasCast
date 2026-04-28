@@ -11,6 +11,18 @@ button {
   cursor: pointer;
 }
 
+@keyframes settingsModalPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .app-shell {
   --page-padding-block: 5.5dvh;
   --page-padding-inline: 4dvw;
@@ -30,6 +42,9 @@ button {
   border-radius: 34px;
   box-shadow: 0 28px 80px rgba(15, 23, 42, 0.12);
   overflow: hidden;
+  transform-origin: center;
+  will-change: transform, opacity;
+  animation: settingsModalPanelIn 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .close-button {
