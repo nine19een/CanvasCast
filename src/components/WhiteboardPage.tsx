@@ -1895,6 +1895,7 @@ function WhiteboardPage({
           imageCacheRef.current,
           cameraSettingsRef.current,
           cameraRecordingVideoRef.current,
+          recordingBackgroundRef.current,
           DEFAULT_FRAME_BACKGROUND_COLOR,
           recordingVisualSettingsRef.current,
           recordingPointerRef.current
@@ -2582,7 +2583,7 @@ function SlideNavigator({
 
     const handleDocumentPointerDown = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Node && navigatorRef.current?.contains(target)) {
+      if (target instanceof Element && target.closest('.slide-navigator__menu-wrap')) {
         return;
       }
 
@@ -3336,12 +3337,13 @@ function drawRecordingFrame(
   imageCache: Map<string, HTMLImageElement>,
   cameraSettings: CameraSettings,
   cameraVideo: HTMLVideoElement | null,
+  recordingBackground: FrameBackgroundPreset | null,
   backgroundColor: string,
   visualSettings: RecordingVisualSettings,
   pointer: RecordingPointerState | null
 ) {
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = '#ffffff';
+  context.fillStyle = backgroundColor;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   const transition = mode === 'slide' ? state.transition : null;
@@ -3352,6 +3354,7 @@ function drawRecordingFrame(
       frame,
       transition,
       imageCache,
+      recordingBackground,
       backgroundColor,
       visualSettings,
       cameraSettings
@@ -3364,7 +3367,7 @@ function drawRecordingFrame(
 
   const snapshot = mode === 'slide' ? getActiveSlideRecordingSnapshot(state) : { frame, elements: state.elements };
   if (snapshot) {
-    drawRecordingSnapshot(context, canvas, snapshot, imageCache, 0, backgroundColor, visualSettings, cameraSettings);
+    drawRecordingSnapshot(context, canvas, snapshot, imageCache, 0, recordingBackground, backgroundColor, visualSettings, cameraSettings);
   }
   drawRecordingPointer(context, canvas, frame, visualSettings, cameraSettings, pointer);
   drawRecordingCameraOverlay(context, canvas, frame, visualSettings, cameraSettings, cameraVideo);
@@ -3381,6 +3384,7 @@ function drawRecordingSlideTransition(
   frame: SlideFrame,
   transition: RecordingTransition,
   imageCache: Map<string, HTMLImageElement>,
+  recordingBackground: FrameBackgroundPreset | null,
   backgroundColor: string,
   visualSettings: RecordingVisualSettings,
   cameraSettings: CameraSettings
@@ -3395,7 +3399,7 @@ function drawRecordingSlideTransition(
   const visualCenterIndex = getSlideTransitionVisualCenterIndex(transition, performance.now());
   const step = getSlideTransitionStep(canvasRect.width);
 
-  drawFixedRecordingBackground(context, layout, backgroundColor);
+  drawFixedRecordingBackground(context, layout, backgroundColor, recordingBackground, imageCache);
   drawFixedCanvasSurface(context, layout, visualSettings);
 
   context.save();
@@ -3415,6 +3419,7 @@ function drawRecordingSnapshot(
   snapshot: RecordingSnapshot,
   imageCache: Map<string, HTMLImageElement>,
   offsetX: number,
+  recordingBackground: FrameBackgroundPreset | null,
   backgroundColor: string,
   visualSettings: RecordingVisualSettings,
   cameraSettings: CameraSettings
@@ -3430,7 +3435,7 @@ function drawRecordingSnapshot(
   context.rect(offsetX, 0, canvas.width, canvas.height);
   context.clip();
   context.translate(offsetX, 0);
-  drawFixedRecordingBackground(context, layout, backgroundColor);
+  drawFixedRecordingBackground(context, layout, backgroundColor, recordingBackground, imageCache);
   drawFixedCanvasSurface(context, layout, visualSettings);
   context.save();
   clipToRecordingCanvas(context, layout);
@@ -3491,11 +3496,58 @@ function roundRecordingRect(rect: { x: number; y: number; width: number; height:
 function drawFixedRecordingBackground(
   context: CanvasRenderingContext2D,
   layout: ReturnType<typeof getStableRecordingCompositionLayout>,
-  backgroundColor: string
+  backgroundColor: string,
+  recordingBackground: FrameBackgroundPreset | null,
+  imageCache: Map<string, HTMLImageElement>
 ) {
   const { backgroundRect } = layout;
   context.fillStyle = backgroundColor;
   context.fillRect(backgroundRect.x, backgroundRect.y, backgroundRect.width, backgroundRect.height);
+
+  if (!recordingBackground) {
+    return;
+  }
+
+  const image = getCachedRecordingImage(recordingBackground.src, imageCache);
+  if (!image) {
+    return;
+  }
+
+  drawCoverImage(context, image, backgroundRect);
+}
+
+function getCachedRecordingImage(src: string, imageCache: Map<string, HTMLImageElement>) {
+  let image = imageCache.get(src);
+  if (!image) {
+    image = new Image();
+    image.src = src;
+    imageCache.set(src, image);
+  }
+
+  return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0 ? image : null;
+}
+
+function drawCoverImage(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  rect: { x: number; y: number; width: number; height: number }
+) {
+  const imageRatio = image.naturalWidth / Math.max(image.naturalHeight, 1);
+  const rectRatio = rect.width / Math.max(rect.height, 1);
+  let sourceWidth = image.naturalWidth;
+  let sourceHeight = image.naturalHeight;
+  let sourceX = 0;
+  let sourceY = 0;
+
+  if (imageRatio > rectRatio) {
+    sourceWidth = sourceHeight * rectRatio;
+    sourceX = (image.naturalWidth - sourceWidth) / 2;
+  } else {
+    sourceHeight = sourceWidth / rectRatio;
+    sourceY = (image.naturalHeight - sourceHeight) / 2;
+  }
+
+  context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, rect.x, rect.y, rect.width, rect.height);
 }
 
 function drawFixedCanvasSurface(

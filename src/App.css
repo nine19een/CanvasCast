@@ -1305,3 +1305,625 @@ button {
   background-position: center;
   background-repeat: no-repeat;
 }
+
+/* Frame background picker layout: random action above a compact 3-column scroll grid. */
+.background-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.background-random-button {
+  display: inline-flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 13px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8fb 100%);
+  color: #111827;
+  font-size: 0.84rem;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.78);
+  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+}
+
+.background-random-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(109, 93, 252, 0.32);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.background-random-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+  box-shadow: none;
+}
+
+.background-random-button__icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
+.background-grid-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.background-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.background-swatch {
+  border-radius: 13px;
+}
+
+.background-swatch--image {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+@media (max-width: 720px) {
+  .background-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .background-grid-scroll {
+    max-height: 300px;
+  }
+}
+
+/* Frame background picker polish: refined random action and clear purple selection. */
+.background-random-button {
+  border-color: rgba(139, 92, 246, 0.22);
+  background:
+    linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(99, 102, 241, 0.08)),
+    rgba(255, 255, 255, 0.94);
+  color: #4c1d95;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.78),
+    0 10px 22px rgba(109, 93, 252, 0.08);
+}
+
+.background-random-button:hover:not(:disabled) {
+  border-color: rgba(139, 92, 246, 0.48);
+  background:
+    linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(99, 102, 241, 0.12)),
+    #ffffff;
+  box-shadow:
+    0 12px 26px rgba(109, 93, 252, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.86);
+}
+
+.background-random-button__icon {
+  width: 24px;
+  height: 24px;
+  background: rgba(139, 92, 246, 0.14);
+  color: #6d5dfc;
+  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.18);
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.background-swatch {
+  border-color: rgba(15, 23, 42, 0.07);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.background-swatch:hover {
+  border-color: rgba(139, 92, 246, 0.28);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+.background-swatch--selected {
+  border-color: #8b5cf6;
+  box-shadow:
+    0 0 0 3px rgba(139, 92, 246, 0.18),
+    0 12px 26px rgba(109, 93, 252, 0.14);
+}
+
+.background-swatch--selected:hover {
+  border-color: #8b5cf6;
+}
+
+.swatch-check {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 18px;
+  height: 18px;
+  inset: auto;
+  border-radius: 999px;
+  background: #8b5cf6;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.92),
+    0 6px 14px rgba(76, 29, 149, 0.24);
+}
+
+.swatch-check::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 4px;
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Frame background random action: glassy material pool cue + centered selected mark. */
+.background-random-button {
+  position: relative;
+  isolation: isolate;
+  min-height: 44px;
+  justify-content: flex-start;
+  padding: 0 16px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  border-color: rgba(139, 92, 246, 0.24);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(244, 240, 255, 0.68)),
+    rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(14px) saturate(1.18);
+  -webkit-backdrop-filter: blur(14px) saturate(1.18);
+  box-shadow:
+    0 16px 34px rgba(109, 93, 252, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+}
+
+.background-random-button::before,
+.background-random-button::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+
+.background-random-button::before {
+  inset: -40% auto auto 44%;
+  width: 150px;
+  height: 110px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 45%, rgba(168, 85, 247, 0.24), transparent 58%),
+    radial-gradient(circle at 72% 52%, rgba(59, 130, 246, 0.16), transparent 62%);
+  filter: blur(5px);
+  z-index: -2;
+}
+
+.background-random-button::after {
+  right: 14px;
+  top: 50%;
+  width: 46px;
+  height: 28px;
+  border-radius: 9px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.68), rgba(167, 139, 250, 0.28));
+  box-shadow:
+    -12px 5px 0 -3px rgba(196, 181, 253, 0.32),
+    -22px -4px 0 -5px rgba(129, 140, 248, 0.24),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  transform: translateY(-50%) rotate(-5deg);
+  z-index: -1;
+}
+
+.background-random-button:hover:not(:disabled) {
+  border-color: rgba(139, 92, 246, 0.5);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(241, 236, 255, 0.76)),
+    rgba(255, 255, 255, 0.68);
+  box-shadow:
+    0 18px 38px rgba(109, 93, 252, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.38);
+}
+
+.background-random-button__icon {
+  background: rgba(255, 255, 255, 0.56);
+  color: #6d5dfc;
+  box-shadow:
+    inset 0 0 0 1px rgba(139, 92, 246, 0.2),
+    0 8px 16px rgba(109, 93, 252, 0.12);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.background-grid-scroll {
+  margin-top: 6px;
+}
+
+.swatch-check {
+  left: 50%;
+  top: 50%;
+  right: auto;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+}
+
+.swatch-check::after {
+  left: 8px;
+  top: 5px;
+  width: 5px;
+  height: 9px;
+}
+
+/* Small alignment polish for background/random controls and custom color plus marks. */
+.background-random-button {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.34),
+    0 6px 14px rgba(109, 93, 252, 0.05);
+}
+
+.background-random-button::before {
+  opacity: 0.28;
+  filter: blur(8px);
+}
+
+.background-random-button::after {
+  box-shadow:
+    -12px 5px 0 -3px rgba(196, 181, 253, 0.2),
+    -22px -4px 0 -5px rgba(129, 140, 248, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.48);
+}
+
+.background-random-button:hover:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.36),
+    0 8px 18px rgba(109, 93, 252, 0.08);
+}
+
+.canvas-background-color--custom,
+.board-properties-panel__color-swatch--custom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.canvas-background-color--custom span,
+.board-properties-panel__color-swatch--custom span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  margin: 0;
+  transform: none;
+}
+
+/* Canvas section polish: aspect cards and full-width color swatch grid. */
+.option-grid--aspect-ratio {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.option-button--aspect-ratio {
+  min-height: 54px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 9px 8px;
+  text-align: center;
+}
+
+.option-button__title {
+  font-size: 0.95rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.option-button__subtitle {
+  color: rgba(100, 116, 139, 0.86);
+  font-size: 0.68rem;
+  font-weight: 760;
+  line-height: 1.08;
+  white-space: nowrap;
+}
+
+.option-button--active .option-button__subtitle {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.canvas-background-color-grid {
+  display: grid !important;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.canvas-background-color {
+  width: 100% !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  flex: initial !important;
+  border-radius: 12px;
+}
+
+.canvas-background-color--custom {
+  position: relative;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.canvas-background-color--custom span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex !important;
+  width: auto !important;
+  height: auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+@media (max-width: 720px) {
+  .option-grid--aspect-ratio {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .canvas-background-color-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Recording settings hierarchy polish: consistent section titles, field titles, and spacing. */
+.settings-scroll {
+  --settings-section-title-color: #0f172a;
+  --settings-field-title-color: #334155;
+  --settings-description-color: #64748b;
+  --settings-field-gap: 12px;
+}
+
+.settings-group--section {
+  padding: 26px 0 28px;
+}
+
+.settings-group--section:first-child {
+  padding-top: 8px;
+}
+
+.settings-group--section + .settings-group--section::before {
+  background: linear-gradient(90deg, transparent, rgba(15, 23, 42, 0.09), transparent);
+}
+
+.section-title {
+  margin: 0 0 16px;
+  color: var(--settings-section-title-color);
+  font-size: 1.02rem;
+  font-weight: 900;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+.settings-subsection {
+  display: grid;
+  gap: var(--settings-field-gap);
+}
+
+.settings-subsection + .settings-subsection {
+  margin-top: 22px;
+}
+
+.settings-subsection-title,
+.settings-field-label,
+.camera-label,
+.camera-setting-field > span:first-child,
+.setting-field-title {
+  margin: 0;
+  color: var(--settings-field-title-color);
+  font-size: 0.82rem;
+  font-weight: 860;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+}
+
+.settings-subsection-title,
+.settings-field-label {
+  margin-bottom: 0;
+}
+
+.settings-field-label:not(:first-child) {
+  margin-top: 4px;
+}
+
+.camera-note {
+  margin: 5px 0 0;
+  color: var(--settings-description-color);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.camera-control {
+  gap: 18px;
+  padding: 2px 0 4px;
+}
+
+.camera-settings-grid {
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.camera-setting-field {
+  gap: 9px;
+  color: var(--settings-field-title-color);
+  font-size: 0.82rem;
+  font-weight: 820;
+}
+
+.camera-setting-field--range {
+  margin-bottom: 2px;
+}
+
+.camera-shape-options {
+  margin-top: 0;
+}
+
+.canvas-background-color-grid,
+.canvas-pattern-grid {
+  margin-top: 0;
+}
+
+.canvas-background-spacing {
+  margin-top: 2px;
+}
+
+.background-section {
+  gap: 12px;
+}
+
+.background-random-button {
+  margin-bottom: 8px;
+}
+
+.background-grid-scroll {
+  margin-top: 2px;
+}
+
+@media (max-width: 720px) {
+  .settings-group--section {
+    padding: 22px 0 24px;
+  }
+
+  .section-title {
+    margin-bottom: 14px;
+    font-size: 0.98rem;
+  }
+
+  .settings-subsection + .settings-subsection {
+    margin-top: 20px;
+  }
+
+  .camera-settings-grid {
+    gap: 15px;
+  }
+}
+
+/* Recording settings canvas controls: purple selected states and clean custom color plus. */
+.canvas-background-color--active {
+  border-color: #8b5cf6 !important;
+  box-shadow:
+    0 0 0 3px rgba(139, 92, 246, 0.2),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.58) !important;
+}
+
+.canvas-background-color--active:hover {
+  border-color: #8b5cf6 !important;
+  box-shadow:
+    0 0 0 3px rgba(139, 92, 246, 0.24),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.66) !important;
+}
+
+.canvas-pattern-option--active {
+  border-color: #8b5cf6 !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  color: #6d28d9 !important;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18) !important;
+}
+
+.canvas-pattern-option--active:hover {
+  border-color: #8b5cf6 !important;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.22) !important;
+}
+
+.canvas-pattern-option--active .canvas-pattern-preview-card {
+  border-color: rgba(139, 92, 246, 0.5) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.54) !important;
+}
+
+.canvas-pattern-option--active .canvas-pattern-label {
+  color: #6d28d9 !important;
+}
+
+.canvas-background-color--custom {
+  overflow: hidden;
+  text-shadow: none !important;
+}
+
+.canvas-background-color--custom span {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  min-height: 22px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  color: #5b21b6 !important;
+  font-size: 1rem !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  text-shadow: none !important;
+  transform: translate(-50%, -50%) !important;
+  box-shadow:
+    0 4px 10px rgba(76, 29, 149, 0.16),
+    inset 0 0 0 1px rgba(139, 92, 246, 0.2) !important;
+}
+
+/* Recording settings canvas controls: final selected-state refinement. */
+.canvas-background-color--active,
+.canvas-background-color--active:hover {
+  border-color: #8b5cf6 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.58) !important;
+  outline: none !important;
+  filter: none !important;
+}
+
+.canvas-background-color--custom span {
+  display: none !important;
+}
+
+.canvas-pattern-option--active,
+.canvas-pattern-option--active:hover {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.canvas-pattern-option--active .canvas-pattern-preview-card {
+  border-color: #8b5cf6 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.54) !important;
+}
+
+.canvas-pattern-option--active .canvas-pattern-label {
+  color: #6d28d9 !important;
+}
+
+/* Recording settings canvas pattern selected border thickness matches color swatches. */
+.canvas-pattern-option--active .canvas-pattern-preview-card {
+  border-width: 2px !important;
+  border-color: #8b5cf6 !important;
+  box-sizing: border-box;
+}

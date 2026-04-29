@@ -2491,3 +2491,20 @@
     max-width: 32px;
   }
 }
+
+/* Keep property-panel custom color plus signs optically centered. */
+.board-properties-panel__color-swatch--custom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.board-properties-panel__color-swatch--custom span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  margin: 0;
+  transform: none;
+}

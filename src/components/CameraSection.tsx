@@ -19,7 +19,7 @@ function CameraSection({
 }: CameraSectionProps) {
   return (
     <div className="section-block">
-      <div className="section-title">摄像头</div>
+      <div className="section-title">摄像头及麦克风</div>
       <div className="camera-control">
         <div>
           <div className="camera-label">摄像头小窗</div>

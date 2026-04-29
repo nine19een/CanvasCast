@@ -11,7 +11,7 @@ import { frameBackgroundPresets } from './frameBackgrounds';
 function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeAspect, setActiveAspect] = useState('1:1');
-  const [activeBackgroundId, setActiveBackgroundId] = useState('');
+  const [activeBackgroundId, setActiveBackgroundId] = useState(() => frameBackgroundPresets[0]?.id ?? '');
   const [cameraSettings, setCameraSettings] = useState<CameraSettings>(DEFAULT_CAMERA_SETTINGS);
   const [recordingVisualSettings, setRecordingVisualSettings] =
     useState<RecordingVisualSettings>(DEFAULT_RECORDING_VISUAL_SETTINGS);
@@ -25,7 +25,7 @@ function App() {
     [activeAspect]
   );
   const activeBackground = useMemo(
-    () => frameBackgroundPresets.find((option) => option.id === activeBackgroundId) ?? null,
+    () => frameBackgroundPresets.find((option) => option.id === activeBackgroundId) ?? frameBackgroundPresets[0] ?? null,
     [activeBackgroundId]
   );
 
