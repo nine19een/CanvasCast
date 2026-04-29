@@ -1,5 +1,5 @@
 ﻿import type React from 'react';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import FloatingControlBar from './FloatingControlBar';
 import LeftPropertiesPanel from './LeftPropertiesPanel';
 import TeleprompterPanel, { DEFAULT_TELEPROMPTER_STATE, type TeleprompterPanelState } from './TeleprompterPanel';
@@ -2553,6 +2553,8 @@ function SlideNavigator({
   const [openMenuSlideId, setOpenMenuSlideId] = useState<string | null>(null);
   const navigatorRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const slideItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const slideItemRectsRef = useRef<Map<string, DOMRect>>(new Map());
   const dragDropIntentRef = useRef<{ targetSlideId: string; placement: 'before' | 'after'; insertionIndex: number } | null>(null);
   const dragInsertionIndexRef = useRef<number | null>(null);
   const lockedTitle = isStructureLocked ? '\u5f55\u5236\u4e2d\u4e0d\u80fd\u4fee\u6539\u5e7b\u706f\u7247\u7ed3\u6784' : undefined;
@@ -2636,11 +2638,73 @@ function SlideNavigator({
     return orderedSlides;
   }, [dragPreviewSlideIds, slides]);
 
+  useLayoutEffect(() => {
+    if (!draggingSlideId || slideItemRectsRef.current.size === 0) {
+      return;
+    }
+
+    const previousRects = slideItemRectsRef.current;
+    slideItemRectsRef.current = new Map();
+    const animatedElements: HTMLDivElement[] = [];
+
+    slideItemRefs.current.forEach((element, slideId) => {
+      if (slideId === draggingSlideId) {
+        return;
+      }
+
+      const previousRect = previousRects.get(slideId);
+      if (!previousRect) {
+        return;
+      }
+
+      const nextRect = element.getBoundingClientRect();
+      const deltaX = previousRect.left - nextRect.left;
+      const deltaY = previousRect.top - nextRect.top;
+      if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) {
+        return;
+      }
+
+      element.style.transition = 'none';
+      element.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+      animatedElements.push(element);
+    });
+
+    if (animatedElements.length === 0) {
+      return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      for (const element of animatedElements) {
+        element.style.transition = 'transform 180ms cubic-bezier(0.16, 1, 0.3, 1)';
+        element.style.transform = '';
+      }
+    });
+    const cleanupTimer = window.setTimeout(() => {
+      for (const element of animatedElements) {
+        element.style.transition = '';
+      }
+    }, 220);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(cleanupTimer);
+    };
+  }, [visibleSlides, draggingSlideId]);
+
   const resetDragPreview = () => {
     setDraggingSlideId(null);
     setDragPreviewSlideIds(null);
+    slideItemRectsRef.current = new Map();
     dragDropIntentRef.current = null;
     dragInsertionIndexRef.current = null;
+  };
+
+  const captureSlideItemRects = () => {
+    const rects = new Map<string, DOMRect>();
+    slideItemRefs.current.forEach((element, slideId) => {
+      rects.set(slideId, element.getBoundingClientRect());
+    });
+    slideItemRectsRef.current = rects;
   };
 
   const getBaseSlideIds = (sourceSlideId: string) => slides.map((slide) => slide.id).filter((slideId) => slideId !== sourceSlideId);
@@ -2719,6 +2783,7 @@ function SlideNavigator({
     dragDropIntentRef.current = dropIntent;
     dragInsertionIndexRef.current = dropIntent.insertionIndex;
     if (nextPreviewIds.join('|') !== currentPreviewIds.join('|')) {
+      captureSlideItemRects();
       setDragPreviewSlideIds(nextPreviewIds);
     }
   };
@@ -2776,6 +2841,13 @@ function SlideNavigator({
           return (
             <Fragment key={slide.id}>
               <div
+                ref={(node) => {
+                  if (node) {
+                    slideItemRefs.current.set(slide.id, node);
+                    return;
+                  }
+                  slideItemRefs.current.delete(slide.id);
+                }}
                 data-slide-id={slide.id}
                 className={`slide-navigator__item${isActive ? ' slide-navigator__item--active' : ''}${
                   draggingSlideId === slide.id ? ' slide-navigator__item--dragging' : ''
