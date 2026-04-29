@@ -243,7 +243,6 @@ function LeftPropertiesPanel({
         aria-label="\u81ea\u5b9a\u4e49\u989c\u8272"
         title="\u81ea\u5b9a\u4e49\u989c\u8272"
       >
-        +
       </button>
       <input
         ref={customColorInputRef}
@@ -286,7 +285,6 @@ function LeftPropertiesPanel({
         aria-label="\u81ea\u5b9a\u4e49\u586b\u5145\u8272"
         title="\u81ea\u5b9a\u4e49\u586b\u5145\u8272"
       >
-        +
       </button>
       <input
         ref={customFillColorInputRef}
@@ -551,6 +549,7 @@ function renderActionLabel(label: string) {
     ['\u4e0b\u79fb\u4e00\u5c42']: ['\u4e0b\u79fb', '\u4e00\u5c42'],
     ['\u7f6e\u4e8e\u9876\u5c42']: ['\u7f6e\u4e8e', '\u9876\u5c42'],
     ['\u7f6e\u4e8e\u5e95\u5c42']: ['\u7f6e\u4e8e', '\u5e95\u5c42'],
+    ['\u88c1\u526a\u56fe\u7247']: ['\u88c1\u526a', '\u56fe\u7247'],
   };
   const lines = splitLabels[label];
 

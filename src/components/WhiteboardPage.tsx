@@ -11,6 +11,7 @@ import { DEFAULT_FRAME_BACKGROUND_COLOR, type FrameBackgroundPreset } from '../f
 import { getRecordingCompositionLayout } from '../recordingLayout';
 import type {
   BoardElement,
+  BoardPoint,
   ColorStyle,
   ImageElement,
   LayerAction,
@@ -3045,17 +3046,48 @@ function getSvgElementTransform(element: BoardElement) {
   return `translate(${bounds.cx} ${bounds.cy}) rotate(${rotation}) scale(${scaleX} ${scaleY}) translate(${-bounds.cx} ${-bounds.cy})`;
 }
 
+function getSmoothDrawPathData(points: BoardPoint[]) {
+  if (points.length === 0) {
+    return '';
+  }
+
+  if (points.length === 1) {
+    const point = points[0];
+    return `M ${point.x} ${point.y} l 0.01 0`;
+  }
+
+  if (points.length === 2) {
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  }
+
+  const commands = [`M ${points[0].x} ${points[0].y}`];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const point = points[index];
+    const nextPoint = points[index + 1];
+    const midX = (point.x + nextPoint.x) / 2;
+    const midY = (point.y + nextPoint.y) / 2;
+    commands.push(`Q ${point.x} ${point.y} ${midX} ${midY}`);
+  }
+
+  const lastPoint = points[points.length - 1];
+  commands.push(`L ${lastPoint.x} ${lastPoint.y}`);
+  return commands.join(' ');
+}
 function renderSlideThumbnailElementContent(element: BoardElement) {
   switch (element.type) {
-    case 'draw':
-      return (
-        <polyline
+    case 'draw': {
+      const pathData = getSmoothDrawPathData(element.points);
+      return pathData ? (
+        <path
           key={element.id}
           className="slide-thumbnail-element slide-thumbnail-element--stroke"
           style={getThumbnailStrokeElementStyle(element)}
-          points={element.points.map((point) => [point.x, point.y].join(',')).join(' ')}
+          d={pathData}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
-      );
+      ) : null;
+    }
     case 'rectangle': {
       const box = normalizeThumbnailRect(element.x, element.y, element.width, element.height);
       const radius = clampCornerRadiusForSize(element.cornerRadius, box.width, box.height);
@@ -3713,6 +3745,31 @@ function addRoundedRectPath(
   context.quadraticCurveTo(x, y, x + safeRadius, y);
 }
 
+function addSmoothDrawPath(context: CanvasRenderingContext2D, points: BoardPoint[]) {
+  if (points.length === 0) {
+    return;
+  }
+
+  context.moveTo(points[0].x, points[0].y);
+  if (points.length === 1) {
+    context.lineTo(points[0].x + 0.01, points[0].y);
+    return;
+  }
+
+  if (points.length === 2) {
+    context.lineTo(points[1].x, points[1].y);
+    return;
+  }
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const point = points[index];
+    const nextPoint = points[index + 1];
+    context.quadraticCurveTo(point.x, point.y, (point.x + nextPoint.x) / 2, (point.y + nextPoint.y) / 2);
+  }
+
+  const lastPoint = points[points.length - 1];
+  context.lineTo(lastPoint.x, lastPoint.y);
+}
 function drawCanvasElement(context: CanvasRenderingContext2D, element: BoardElement, imageCache: Map<string, HTMLImageElement>) {
   context.save();
   context.lineJoin = 'round';
@@ -3727,8 +3784,7 @@ function drawCanvasElement(context: CanvasRenderingContext2D, element: BoardElem
         context.beginPath();
         context.strokeStyle = element.color;
         context.lineWidth = getCanvasElementStrokeWidth(element);
-        context.moveTo(element.points[0].x, element.points[0].y);
-        element.points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+        addSmoothDrawPath(context, element.points);
         context.stroke();
       }
       break;

@@ -2036,17 +2036,48 @@ function getElementSvgTransform(element: BoardElement) {
   return `translate(${center.x} ${center.y}) rotate(${rotation}) scale(${scaleX} ${scaleY}) translate(${-center.x} ${-center.y})`;
 }
 
+function getSmoothDrawPathData(points: BoardPoint[]) {
+  if (points.length === 0) {
+    return '';
+  }
+
+  if (points.length === 1) {
+    const point = points[0];
+    return `M ${point.x} ${point.y} l 0.01 0`;
+  }
+
+  if (points.length === 2) {
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  }
+
+  const commands = [`M ${points[0].x} ${points[0].y}`];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const point = points[index];
+    const nextPoint = points[index + 1];
+    const midX = (point.x + nextPoint.x) / 2;
+    const midY = (point.y + nextPoint.y) / 2;
+    commands.push(`Q ${point.x} ${point.y} ${midX} ${midY}`);
+  }
+
+  const lastPoint = points[points.length - 1];
+  commands.push(`L ${lastPoint.x} ${lastPoint.y}`);
+  return commands.join(' ');
+}
 function renderElementContent(element: BoardElement) {
   switch (element.type) {
-    case 'draw':
-      return (
-        <polyline
+    case 'draw': {
+      const pathData = getSmoothDrawPathData(element.points);
+      return pathData ? (
+        <path
           key={element.id}
           className="board-element board-element--stroke"
           style={getStrokeElementSvgStyle(element)}
-          points={element.points.map((point) => [point.x, point.y].join(',')).join(' ')}
+          d={pathData}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
-      );
+      ) : null;
+    }
     case 'rectangle': {
       const box = normalizeRect(element.x, element.y, element.width, element.height);
       const radius = clampCornerRadiusForSize(element.cornerRadius, box.width, box.height);
