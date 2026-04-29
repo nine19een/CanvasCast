@@ -3009,6 +3009,7 @@ function SlideThumbnail({ slide, recordingVisualSettings }: { slide: Slide; reco
   const backgroundColor = normalizeCanvasBackgroundColor(recordingVisualSettings.canvasBackgroundColor);
   const isDarkBackground = isDarkCanvasBackground(backgroundColor);
   const backgroundStyle = getCanvasBackgroundCss(recordingVisualSettings);
+  const thumbnailClipId = getSlideThumbnailClipId(slide.id);
   const outlineStyle = {
     stroke: isDarkBackground ? 'rgba(226, 232, 240, 0.62)' : 'rgba(15, 23, 42, 0.14)',
   };
@@ -3021,14 +3022,26 @@ function SlideThumbnail({ slide, recordingVisualSettings }: { slide: Slide; reco
       aria-label={`${slide.name} preview`}
       preserveAspectRatio="xMidYMid meet"
     >
-      <foreignObject x={frame.x} y={frame.y} width={frame.width} height={frame.height}>
-        <div className="slide-navigator__thumbnail-bg-html" style={backgroundStyle} />
-      </foreignObject>
+      <defs>
+        <clipPath id={thumbnailClipId}>
+          <rect {...frame} />
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#${thumbnailClipId})`}>
+        <foreignObject x={frame.x} y={frame.y} width={frame.width} height={frame.height}>
+          <div className="slide-navigator__thumbnail-bg-html" style={backgroundStyle} />
+        </foreignObject>
+        {slide.elements.map((element) => renderSlideThumbnailElement(element))}
+      </g>
       <rect className="slide-navigator__thumbnail-outline" style={outlineStyle} {...frame} />
-      {slide.elements.map((element) => renderSlideThumbnailElement(element))}
     </svg>
   );
 }
+
+function getSlideThumbnailClipId(slideId: string) {
+  return `slide-thumbnail-clip-${slideId.replace(/[^a-zA-Z0-9_-]/g, '-') || 'slide'}`;
+}
+
 function renderSlideThumbnailElement(element: BoardElement) {
   return (
     <g key={element.id} transform={getSvgElementTransform(element)} opacity={clampOpacity(element.opacity)}>
