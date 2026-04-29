@@ -1272,3 +1272,36 @@ button {
 .canvas-pattern-option--active .canvas-pattern-label {
   color: #4338ca;
 }
+
+
+/* Frame background asset picker: image presets only, no color-card catalogue. */
+.background-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.background-swatch--image {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.background-swatch--random:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+  box-shadow: none;
+}
+
+.background-empty-note {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.composition-background {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}

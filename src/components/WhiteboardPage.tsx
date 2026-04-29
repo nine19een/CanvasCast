@@ -1,4 +1,4 @@
-﻿import type React from 'react';
+import type React from 'react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import FloatingControlBar from './FloatingControlBar';
 import LeftPropertiesPanel from './LeftPropertiesPanel';
@@ -7,7 +7,7 @@ import TopToolbar from './TopToolbar';
 import WhiteboardStage from './WhiteboardStage';
 import type { CameraSettings, RecordingVisualSettings } from '../cameraTypes';
 import { drawCanvasBackgroundPattern, getCanvasBackgroundCss, isDarkCanvasBackground, normalizeCanvasBackgroundColor } from '../canvasBackground';
-import type { BackgroundSwatch } from '../mockOptions';
+import { DEFAULT_FRAME_BACKGROUND_COLOR, type FrameBackgroundPreset } from '../frameBackgrounds';
 import { getRecordingCompositionLayout } from '../recordingLayout';
 import type {
   BoardElement,
@@ -61,7 +61,7 @@ type WhiteboardPageProps = {
   onCameraSettingsChange: (patch: Partial<CameraSettings>) => void;
   cameraStream: MediaStream | null;
   microphoneStream: MediaStream | null;
-  recordingBackground: BackgroundSwatch;
+  recordingBackground: FrameBackgroundPreset | null;
   recordingVisualSettings: RecordingVisualSettings;
 };
 
@@ -1895,7 +1895,7 @@ function WhiteboardPage({
           imageCacheRef.current,
           cameraSettingsRef.current,
           cameraRecordingVideoRef.current,
-          recordingBackgroundRef.current.color,
+          DEFAULT_FRAME_BACKGROUND_COLOR,
           recordingVisualSettingsRef.current,
           recordingPointerRef.current
         );
@@ -2172,15 +2172,28 @@ function WhiteboardPage({
   return (
     <div ref={pageRef} className="board-page">
       <TopToolbar
-        activeTool={activeTool}
-        onToolChange={handleToolChange}
-        onInsertImage={handleInsertImage}
-        canUndo={history.past.length > 0}
-        canRedo={history.future.length > 0}
-        onUndo={undo}
-        onRedo={redo}
-      />
-      <LeftPropertiesPanel
+          activeTool={activeTool}
+          onToolChange={handleToolChange}
+          onInsertImage={handleInsertImage}
+          canUndo={history.past.length > 0}
+          canRedo={history.future.length > 0}
+          onUndo={undo}
+          onRedo={redo}
+        />
+      <div className="board-left-rail">
+        <FloatingControlBar
+          onOpenSettings={onOpenSettings}
+          onEnterPreparing={enterRecordingPreparing}
+          onCancelPreparing={cancelRecordingPreparing}
+          onStartRecording={startRecording}
+          onPauseRecording={pauseRecording}
+          onResumeRecording={resumeRecording}
+          onStopRecording={stopRecording}
+          onToggleTeleprompter={() => setIsTeleprompterOpen((current) => !current)}
+          recordingStatus={recordingStatus}
+          recordingElapsedLabel={recordingElapsedLabel}
+        />
+        <LeftPropertiesPanel
         activeTool={activeTool}
         selectedCount={selectedIds.length}
         hasTextSelection={Boolean(selectedTextElement)}
@@ -2207,19 +2220,8 @@ function WhiteboardPage({
         canTransformSelection={activeTool === 'select' && selectedIds.length > 0}
         onRotateSelection={handleRotateSelection}
         onFlipSelection={handleFlipSelection}
-      />
-      <FloatingControlBar
-        onOpenSettings={onOpenSettings}
-        onEnterPreparing={enterRecordingPreparing}
-        onCancelPreparing={cancelRecordingPreparing}
-        onStartRecording={startRecording}
-        onPauseRecording={pauseRecording}
-        onResumeRecording={resumeRecording}
-        onStopRecording={stopRecording}
-        onToggleTeleprompter={() => setIsTeleprompterOpen((current) => !current)}
-        recordingStatus={recordingStatus}
-        recordingElapsedLabel={recordingElapsedLabel}
-      />
+              />
+      </div>
       {isTeleprompterOpen ? (
         <TeleprompterPanel
           value={teleprompterState}
@@ -4345,39 +4347,3 @@ function isCornerRadiusEditableElement(element: BoardElement): element is Extrac
 }
 
 export default WhiteboardPage;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

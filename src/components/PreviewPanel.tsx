@@ -1,12 +1,12 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CameraSettings, RecordingVisualSettings } from '../cameraTypes';
-import type { BackgroundSwatch } from '../mockOptions';
+import { DEFAULT_FRAME_BACKGROUND_COLOR, type FrameBackgroundPreset } from '../frameBackgrounds';
 import { getRecordingCompositionLayout } from '../recordingLayout';
 import { getCanvasBackgroundCssWithSpacing } from '../canvasBackground';
 
 type PreviewPanelProps = {
   aspectRatio: number;
-  background: BackgroundSwatch;
+  background: FrameBackgroundPreset | null;
   visualSettings: RecordingVisualSettings;
   cameraSettings: CameraSettings;
   cameraStream: MediaStream | null;
@@ -139,7 +139,13 @@ function PreviewPanel({ aspectRatio, background, visualSettings, cameraSettings,
             className="composition-frame"
             style={{ width: `${frameSize.width}px`, height: `${frameSize.height}px` }}
           >
-            <div className="composition-background" style={{ background: background.color }}>
+            <div
+              className="composition-background"
+              style={{
+                backgroundColor: DEFAULT_FRAME_BACKGROUND_COLOR,
+                ...(background ? { backgroundImage: `url(${background.src})` } : {}),
+              }}
+            >
               <div
                 className="whiteboard-canvas"
                 style={{

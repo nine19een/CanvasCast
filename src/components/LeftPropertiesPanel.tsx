@@ -1,4 +1,4 @@
-﻿import { useRef } from 'react';
+import { useRef } from 'react';
 import type { CSSProperties, ChangeEvent } from 'react';
 import type { ColorStyle, LayerAction, StrokeStyle, TextStyle, ToolType } from '../whiteboard/types';
 import {
@@ -480,7 +480,7 @@ function LeftPropertiesPanel({
                       title={action.title}
                     >
                       {renderPanelIcon(action.icon)}
-                      <span>{action.label}</span>
+                      {renderActionLabel(action.label)}
                     </button>
                   ))}
                 </div>
@@ -499,7 +499,7 @@ function LeftPropertiesPanel({
                       title={action.title}
                     >
                       {renderPanelIcon(action.icon)}
-                      <span>{action.label}</span>
+                      {renderActionLabel(action.label)}
                     </button>
                   ))}
                 </div>
@@ -517,7 +517,7 @@ function LeftPropertiesPanel({
                       title={cropImageAction.title}
                     >
                       {renderPanelIcon(cropImageAction.icon)}
-                      <span>{cropImageAction.label}</span>
+                      {renderActionLabel(cropImageAction.label)}
                     </button>
                   ) : null}
                   {operationActions.map((action) => (
@@ -530,7 +530,7 @@ function LeftPropertiesPanel({
                       title={action.title}
                     >
                       {renderPanelIcon(action.icon)}
-                      <span>{action.label}</span>
+                      {renderActionLabel(action.label)}
                     </button>
                   ))}
                 </div>
@@ -543,6 +543,28 @@ function LeftPropertiesPanel({
   );
 }
 
+function renderActionLabel(label: string) {
+  const splitLabels: Record<string, [string, string]> = {
+    ['\u6c34\u5e73\u7ffb\u8f6c']: ['\u6c34\u5e73', '\u7ffb\u8f6c'],
+    ['\u5782\u76f4\u7ffb\u8f6c']: ['\u5782\u76f4', '\u7ffb\u8f6c'],
+    ['\u4e0a\u79fb\u4e00\u5c42']: ['\u4e0a\u79fb', '\u4e00\u5c42'],
+    ['\u4e0b\u79fb\u4e00\u5c42']: ['\u4e0b\u79fb', '\u4e00\u5c42'],
+    ['\u7f6e\u4e8e\u9876\u5c42']: ['\u7f6e\u4e8e', '\u9876\u5c42'],
+    ['\u7f6e\u4e8e\u5e95\u5c42']: ['\u7f6e\u4e8e', '\u5e95\u5c42'],
+  };
+  const lines = splitLabels[label];
+
+  if (!lines) {
+    return <span>{label}</span>;
+  }
+
+  return (
+    <span className="board-properties-panel__action-label">
+      <span>{lines[0]}</span>
+      <span>{lines[1]}</span>
+    </span>
+  );
+}
 function renderPanelIcon(name: PanelIconName) {
   switch (name) {
     case 'rotate-left':
@@ -696,12 +718,3 @@ function getToolDisplayName(tool: ToolType) {
 }
 
 export default LeftPropertiesPanel;
-
-
-
-
-
-
-
-
-

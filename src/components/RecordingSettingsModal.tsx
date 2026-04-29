@@ -1,15 +1,12 @@
-﻿import { useMemo, useRef, useState } from 'react';
+﻿import { useMemo, useRef } from 'react';
 import AspectRatioSection from './AspectRatioSection';
 import BackgroundSection from './BackgroundSection';
 import CameraSection from './CameraSection';
 import type { CameraSettings, CanvasBackgroundPattern, MediaDeviceChoice, RecordingVisualSettings } from '../cameraTypes';
 import PreviewPanel from './PreviewPanel';
 import { getCanvasPatternColor, normalizeCanvasBackgroundColor } from '../canvasBackground';
-import {
-  aspectRatioOptions,
-  backgroundCategories,
-  backgroundOptions,
-} from '../mockOptions';
+import { aspectRatioOptions } from '../mockOptions';
+import { frameBackgroundPresets } from '../frameBackgrounds';
 
 const CANVAS_PADDING_MAX = 80;
 const CANVAS_BACKGROUND_SPACING_MIN = 40;
@@ -63,25 +60,15 @@ function RecordingSettingsModal({
   onRefreshDevices,
   onClose,
 }: RecordingSettingsModalProps) {
-  const [activeCategory, setActiveCategory] = useState('all');
-
   const selectedBackground = useMemo(
-    () => backgroundOptions.find((option) => option.id === activeBackgroundId) ?? backgroundOptions[0],
+    () => frameBackgroundPresets.find((option) => option.id === activeBackgroundId) ?? null,
     [activeBackgroundId]
-  );
-
-  const filteredBackgrounds = useMemo(
-    () =>
-      activeCategory === 'all'
-        ? backgroundOptions
-        : backgroundOptions.filter((option) => option.category === activeCategory),
-    [activeCategory]
   );
 
   const activeAspectItem = aspectRatioOptions.find((option) => option.key === activeAspect) ?? aspectRatioOptions[4];
 
   const handleRandomBackground = () => {
-    const current = filteredBackgrounds[Math.floor(Math.random() * filteredBackgrounds.length)];
+    const current = frameBackgroundPresets[Math.floor(Math.random() * frameBackgroundPresets.length)];
     if (current) {
       onBackgroundChange(current.id);
     }
@@ -125,10 +112,7 @@ function RecordingSettingsModal({
 
               <div className="settings-group settings-group--section">
                 <BackgroundSection
-                  categories={backgroundCategories}
-                  activeCategory={activeCategory}
-                  onCategoryChange={setActiveCategory}
-                  options={filteredBackgrounds}
+                  options={frameBackgroundPresets}
                   selectedBackgroundId={activeBackgroundId}
                   onSelectBackground={onBackgroundChange}
                   onRandomSelect={handleRandomBackground}

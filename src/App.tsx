@@ -5,12 +5,13 @@ import RecordingSettingsModal from './components/RecordingSettingsModal';
 import WhiteboardPage from './components/WhiteboardPage';
 import { DEFAULT_CAMERA_SETTINGS, DEFAULT_RECORDING_VISUAL_SETTINGS } from './cameraTypes';
 import type { CameraSettings, MediaDeviceChoice, RecordingVisualSettings } from './cameraTypes';
-import { aspectRatioOptions, backgroundOptions } from './mockOptions';
+import { aspectRatioOptions } from './mockOptions';
+import { frameBackgroundPresets } from './frameBackgrounds';
 
 function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeAspect, setActiveAspect] = useState('1:1');
-  const [activeBackgroundId, setActiveBackgroundId] = useState('bg-white');
+  const [activeBackgroundId, setActiveBackgroundId] = useState('');
   const [cameraSettings, setCameraSettings] = useState<CameraSettings>(DEFAULT_CAMERA_SETTINGS);
   const [recordingVisualSettings, setRecordingVisualSettings] =
     useState<RecordingVisualSettings>(DEFAULT_RECORDING_VISUAL_SETTINGS);
@@ -24,7 +25,7 @@ function App() {
     [activeAspect]
   );
   const activeBackground = useMemo(
-    () => backgroundOptions.find((option) => option.id === activeBackgroundId) ?? backgroundOptions[0],
+    () => frameBackgroundPresets.find((option) => option.id === activeBackgroundId) ?? null,
     [activeBackgroundId]
   );
 
