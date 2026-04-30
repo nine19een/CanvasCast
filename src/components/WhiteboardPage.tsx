@@ -48,11 +48,15 @@ import {
   getElementBounds,
   getElementCenter,
   getSelectionBounds,
+  getTextRenderLines,
   moveElementCenterTo,
   normalizeRotation,
   normalizeRect,
   offsetElement,
   rotatePointAround,
+  TEXT_BOX_PADDING_X,
+  TEXT_BOX_PADDING_Y,
+  TEXT_LINE_HEIGHT_RATIO,
 } from '../whiteboard/utils';
 
 type WhiteboardPageProps = {
@@ -2544,7 +2548,6 @@ function ZoomControls({
 }
 
 
-
 function ClearBoardConfirm({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   return (
     <div className="board-clear-confirm" role="dialog" aria-modal="true" aria-labelledby="board-clear-confirm-title">
@@ -3080,6 +3083,11 @@ function getSlideThumbnailClipId(slideId: string) {
   return `slide-thumbnail-clip-${slideId.replace(/[^a-zA-Z0-9_-]/g, '-') || 'slide'}`;
 }
 
+
+function getSlideThumbnailTextClipId(elementId: string) {
+  return `slide-thumbnail-text-clip-${elementId.replace(/[^a-zA-Z0-9_-]/g, '-') || 'text'}`;
+}
+
 function renderSlideThumbnailElement(element: BoardElement) {
   return (
     <g key={element.id} transform={getSvgElementTransform(element)} opacity={clampOpacity(element.opacity)}>
@@ -3190,17 +3198,43 @@ function renderSlideThumbnailElementContent(element: BoardElement) {
         </g>
       );
     }
-    case 'text':
+    case 'text': {
+      const clipId = getSlideThumbnailTextClipId(element.id);
+      const lineHeight = element.fontSize * TEXT_LINE_HEIGHT_RATIO;
+      const textX = element.x + TEXT_BOX_PADDING_X;
+      const textY = element.y + TEXT_BOX_PADDING_Y;
+
       return (
-        <foreignObject key={element.id} x={element.x} y={element.y} width={element.width} height={element.height}>
-          <div
-            className="slide-thumbnail-text"
-            style={{ fontFamily: resolveTextFontFamily(element.fontFamily), fontSize: `${element.fontSize}px`, color: element.color }}
+        <g key={element.id}>
+          <defs>
+            <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+              <rect x={element.x} y={element.y} width={element.width} height={element.height} />
+            </clipPath>
+          </defs>
+          <text
+            className="slide-thumbnail-text-node"
+            clipPath={`url(#${clipId})`}
+            x={textX}
+            y={textY}
+            dominantBaseline="text-before-edge"
+            textAnchor="start"
+            xmlSpace="preserve"
+            style={{
+              fontFamily: resolveTextFontFamily(element.fontFamily),
+              fontSize: `${element.fontSize}px`,
+              fontWeight: 500,
+              fill: element.color,
+            }}
           >
-            {element.text || 'Text'}
-          </div>
-        </foreignObject>
+            {getTextRenderLines(element.text).map((line, index) => (
+              <tspan key={index} x={textX} y={textY + index * lineHeight}>
+                {line || ' '}
+              </tspan>
+            ))}
+          </text>
+        </g>
       );
+    }
     case 'image': {
       const box = normalizeThumbnailRect(element.x, element.y, element.width, element.height);
       return <image key={element.id} href={element.src} preserveAspectRatio="none" {...box} />;
@@ -4031,13 +4065,22 @@ function getCanvasArrowGeometry(element: LinearElement) {
 }
 
 function drawCanvasText(context: CanvasRenderingContext2D, element: Extract<BoardElement, { type: 'text' }>) {
+  const lineHeight = element.fontSize * TEXT_LINE_HEIGHT_RATIO;
+  const textX = element.x + TEXT_BOX_PADDING_X;
+  const textY = element.y + TEXT_BOX_PADDING_Y;
+  const textWidth = Math.max(1, element.width - TEXT_BOX_PADDING_X * 2);
+
+  context.save();
+  context.beginPath();
+  context.rect(element.x, element.y, element.width, element.height);
+  context.clip();
   context.fillStyle = element.color;
-  context.font = `${element.fontSize}px ${resolveTextFontFamily(element.fontFamily)}`;
+  context.font = `500 ${element.fontSize}px ${resolveTextFontFamily(element.fontFamily)}`;
   context.textBaseline = 'top';
-  const lineHeight = element.fontSize * 1.25;
-  element.text.split('\n').forEach((line, index) => {
-    context.fillText(line || ' ', element.x, element.y + index * lineHeight, element.width);
+  getTextRenderLines(element.text).forEach((line, index) => {
+    context.fillText(line || ' ', textX, textY + index * lineHeight, textWidth);
   });
+  context.restore();
 }
 
 function drawCanvasImage(context: CanvasRenderingContext2D, element: ImageElement, imageCache: Map<string, HTMLImageElement>) {

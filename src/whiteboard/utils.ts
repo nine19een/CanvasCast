@@ -7,6 +7,14 @@ const LINE_HIT_TOLERANCE = 14;
 const CLOSED_SHAPE_HIT_TOLERANCE = 10;
 const STROKE_HIT_EXTRA_TOLERANCE = 3;
 
+export const TEXT_BOX_PADDING_X = 10;
+export const TEXT_BOX_PADDING_Y = 8;
+export const TEXT_LINE_HEIGHT_RATIO = 1.4;
+
+export function getTextRenderLines(text: string) {
+  return (text || 'Text').split('\n');
+}
+
 export function generateElementId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
