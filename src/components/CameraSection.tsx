@@ -20,6 +20,28 @@ function CameraSection({
   return (
     <div className="section-block">
       <div className="section-title">摄像头及麦克风</div>
+
+      <div className="camera-settings-grid">
+        <label className="camera-setting-field">
+          <span>麦克风设备</span>
+          <select
+            value={settings.audioDeviceId}
+            onFocus={onRefreshDevices}
+            onChange={(event) => onChange({ audioDeviceId: event.target.value })}
+          >
+            <option value="">不使用麦克风</option>
+            <option value="default">默认麦克风</option>
+            {audioDevices.map((device) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {audioDevices.length === 0 ? <p className="camera-note">未检测到麦克风设备。</p> : null}
+      </div>
+
       <div className="camera-control">
         <div>
           <div className="camera-label">摄像头小窗</div>
@@ -47,23 +69,6 @@ function CameraSection({
               >
                 <option value="">默认摄像头</option>
                 {videoDevices.map((device) => (
-                  <option key={device.deviceId} value={device.deviceId}>
-                    {device.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="camera-setting-field">
-              <span>麦克风设备</span>
-              <select
-                value={settings.audioDeviceId}
-                onFocus={onRefreshDevices}
-                onChange={(event) => onChange({ audioDeviceId: event.target.value })}
-              >
-                <option value="">不使用麦克风</option>
-                <option value="default">默认麦克风</option>
-                {audioDevices.map((device) => (
                   <option key={device.deviceId} value={device.deviceId}>
                     {device.label}
                   </option>
@@ -106,11 +111,11 @@ function CameraSection({
             </div>
           </div>
 
-          {mediaError ? <p className="camera-error">{mediaError}</p> : null}
           {videoDevices.length === 0 ? <p className="camera-note">未检测到摄像头设备。</p> : null}
-          {audioDevices.length === 0 ? <p className="camera-note">未检测到麦克风设备。</p> : null}
         </>
       ) : null}
+
+      {mediaError ? <p className="camera-error">{mediaError}</p> : null}
     </div>
   );
 }

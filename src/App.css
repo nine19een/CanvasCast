@@ -1764,6 +1764,10 @@ button {
   padding: 2px 0 4px;
 }
 
+.camera-settings-grid + .camera-control {
+  margin-top: 22px;
+}
+
 .camera-settings-grid {
   gap: 18px;
   margin-top: 20px;
