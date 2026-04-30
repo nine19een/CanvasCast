@@ -1107,6 +1107,39 @@ function WhiteboardPage({
     setPasteCount((current) => current + 1);
   }, [activeTool, elements, onCommitElementsChange, selectedIds]);
 
+  const handleEraseElementsById = useCallback((ids: string[]) => {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const eraseIds = new Set(ids);
+    const currentScopeId = activeScopeRef.current;
+    const currentSlides = materializeActiveSlideElements(slides, currentScopeId, elements);
+    const currentFreeboardElements = currentScopeId === null ? elements : freeboardElements;
+    const nextSlides = currentSlides.map((slide) => ({
+      ...slide,
+      elements: slide.elements.filter((element) => !eraseIds.has(element.id)),
+    }));
+    const nextFreeboardElements = currentFreeboardElements.filter((element) => !eraseIds.has(element.id));
+    const previousEntry = createBoardHistoryEntry(currentScopeId, currentSlides, currentFreeboardElements);
+    const nextEntry = createBoardHistoryEntry(currentScopeId, nextSlides, nextFreeboardElements);
+
+    if (serializeBoardHistoryEntry(previousEntry) === serializeBoardHistoryEntry(nextEntry)) {
+      return;
+    }
+
+    const nextPresent = getScopeElementsFromCollections(nextSlides, nextFreeboardElements, currentScopeId);
+    setSlides(nextSlides);
+    setFreeboardElements(nextFreeboardElements);
+    setSelectedIds((current) => current.filter((id) => !eraseIds.has(id)));
+    setTextEditor((current) => (current && eraseIds.has(current.elementId) ? null : current));
+    setHistory((current) => ({
+      past: [...current.past, previousEntry],
+      present: cloneElements(nextPresent),
+      future: [],
+    }));
+  }, [elements, freeboardElements, slides]);
+
   const handleDeleteSelection = useCallback(() => {
     if (activeTool !== 'select' || selectedIds.length === 0) {
       return;
@@ -2272,6 +2305,7 @@ function WhiteboardPage({
           onActiveToolChange={handleToolChange}
           onCommitElementsChange={onCommitElementsChange}
           onCommitElementOwnerMigration={onCommitElementOwnerMigration}
+          onEraseElementsById={handleEraseElementsById}
           getScopeElements={getScopeElements}
           onElementsChange={onElementsChange}
           onSelectedIdsChange={setSelectedIds}

@@ -1,4 +1,4 @@
-﻿import type React from 'react';
+import type React from 'react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CameraSettings, RecordingVisualSettings } from '../cameraTypes';
 import { getCameraPositionFromRect } from '../recordingLayout';
@@ -97,6 +97,7 @@ type WhiteboardStageProps = {
     next: BoardElement[],
     ownerMap: Record<string, string | null>
   ) => void;
+  onEraseElementsById: (ids: string[]) => void;
   getScopeElements: (slideId: string | null) => BoardElement[];
   onElementsChange: React.Dispatch<React.SetStateAction<BoardElement[]>>;
   onSelectedIdsChange: React.Dispatch<React.SetStateAction<string[]>>;
@@ -173,6 +174,7 @@ function WhiteboardStage({
   onActiveToolChange,
   onCommitElementsChange,
   onCommitElementOwnerMigration,
+  onEraseElementsById,
   getScopeElements,
   onElementsChange,
   onSelectedIdsChange,
@@ -548,9 +550,9 @@ function WhiteboardStage({
     setIsCameraDragging(false);
   };
 
-  const getTopElementAtPoint = (point: BoardPoint) => {
-    for (let index = elements.length - 1; index >= 0; index -= 1) {
-      const element = elements[index];
+  const getTopElementInCollectionAtPoint = (point: BoardPoint, candidates: BoardElement[]) => {
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const element = candidates[index];
       const closedShapeMode = element.type === 'rectangle' || element.type === 'ellipse' ? 'fill' : undefined;
 
       if (hitTestElement(element, point, { closedShapeMode })) {
@@ -559,6 +561,13 @@ function WhiteboardStage({
     }
 
     return null;
+  };
+
+  const getTopElementAtPoint = (point: BoardPoint) => getTopElementInCollectionAtPoint(point, elements);
+
+  const getEraserTargetAtPoint = (point: BoardPoint) => {
+    const targetSlide = getSlideAtPoint(point);
+    return getTopElementInCollectionAtPoint(point, targetSlide ? targetSlide.elements : freeboardElements);
   };
 
   const getResizeCursor = (handle: DragHandle) =>
@@ -624,18 +633,12 @@ function WhiteboardStage({
   };
 
   const eraseAtPoint = (point: BoardPoint) => {
-    const target = getTopElementAtPoint(point);
+    const target = getEraserTargetAtPoint(point);
     if (!target) {
       return;
     }
 
-    const nextElements = elements.filter((element) => element.id !== target.id);
-    onCommitElementsChange(elements, nextElements);
-    onSelectedIdsChange((current) => current.filter((id) => id !== target.id));
-
-    if (textEditor?.elementId === target.id) {
-      onTextEditorChange(null);
-    }
+    onEraseElementsById([target.id]);
   };
 
   const getBoxResizeHandle = (point: BoardPoint): DragHandle | null => {
